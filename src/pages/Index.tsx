@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useCallback } from "react";
 import { useScrumData } from "@/hooks/use-scrum-data";
+import { usePlanData } from "@/hooks/use-plan-data";
 import { ProjectTabs } from "@/components/ProjectTabs";
 import { DatePicker } from "@/components/DatePicker";
 import { DataIO } from "@/components/DataIO";
@@ -8,9 +9,12 @@ import { StandupView } from "@/components/StandupView";
 import { TimesheetView } from "@/components/TimesheetView";
 import { RecentEntries } from "@/components/RecentEntries";
 import { YesterdayPanel } from "@/components/YesterdayPanel";
+import { PlanningView } from "@/components/PlanningView";
+import { SettingsModal } from "@/components/SettingsModal";
+import { SyncStatusIndicator } from "@/components/SyncStatusIndicator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ClipboardList } from "lucide-react";
-import { formatDate, getYesterdayDate } from "@/lib/types";
+import { getYesterdayDate } from "@/lib/types";
 import { parseTasks } from "@/lib/task-parser";
 
 const Index = () => {
@@ -28,7 +32,14 @@ const Index = () => {
     removeProject,
     renameProject,
     getEntriesForProject,
+    triggerSync,
   } = useScrumData();
+
+  const { planData, savePlanTask, removePlanTask, updatePlanTask } = usePlanData();
+
+  const handleCredentialsChange = useCallback(() => {
+    triggerSync();
+  }, [triggerSync]);
 
   const yesterdayDate = getYesterdayDate(selectedDate);
   const yesterday = useMemo(
@@ -41,7 +52,6 @@ const Index = () => {
     [activeProject, getEntriesForProject]
   );
 
-  // Collect previous tasks for merge suggestions (last 7 entries, excluding current date)
   const previousTasks = useMemo(() => {
     return entries
       .filter((e) => e.date !== selectedDate)
@@ -52,17 +62,29 @@ const Index = () => {
       });
   }, [entries, selectedDate]);
 
+  const allProjectsStandup = useMemo(() => {
+    return data.projects.map((proj) => ({
+      project: proj,
+      yesterday: getEntry(proj, yesterdayDate),
+      today: getEntry(proj, selectedDate),
+    }));
+  }, [data.projects, yesterdayDate, selectedDate, getEntry]);
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 py-3">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <ClipboardList className="w-5 h-5 text-primary" />
-              <h1 className="text-lg font-bold tracking-tight">Daily Scrum Logger</h1>
+        <div className="max-w-5xl mx-auto px-2 sm:px-4 py-2 sm:py-3">
+          <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <ClipboardList className="w-5 h-5 text-primary shrink-0 hidden sm:block" />
+              <h1 className="text-sm sm:text-lg font-bold tracking-tight truncate">Scrum Logger</h1>
+              <SyncStatusIndicator />
             </div>
-            <div className="flex items-center gap-2">
-              <DataIO data={data} onImport={importData} />
+            <div className="flex items-center gap-1 shrink-0">
+              <div className="hidden sm:flex items-center gap-1">
+                <DataIO data={data} onImport={importData} />
+              </div>
+              <SettingsModal onCredentialsChange={handleCredentialsChange} />
               <DatePicker date={selectedDate} onChange={setSelectedDate} />
             </div>
           </div>
@@ -77,16 +99,19 @@ const Index = () => {
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-6">
+      <main className="max-w-5xl mx-auto px-2 sm:px-4 pb-6">
         {activeProject ? (
-          <Tabs defaultValue="log" className="space-y-4">
-            <TabsList>
-              <TabsTrigger value="log">Log</TabsTrigger>
-              <TabsTrigger value="standup">Standup</TabsTrigger>
-              <TabsTrigger value="timesheet">Timesheet</TabsTrigger>
-            </TabsList>
+          <Tabs defaultValue="log" className="space-y-0">
+            <div className="sticky top-[73px] z-[9] bg-background/95 backdrop-blur-sm py-3 border-b border-border/30 -mx-2 sm:-mx-4 px-2 sm:px-4">
+              <TabsList className="w-full sm:w-auto">
+                <TabsTrigger value="log" className="flex-1 sm:flex-none">Log</TabsTrigger>
+                <TabsTrigger value="planning" className="flex-1 sm:flex-none">Planning</TabsTrigger>
+                <TabsTrigger value="standup" className="flex-1 sm:flex-none">Standup</TabsTrigger>
+                <TabsTrigger value="timesheet" className="flex-1 sm:flex-none">Timesheet</TabsTrigger>
+              </TabsList>
+            </div>
 
-            <TabsContent value="log">
+            <TabsContent value="log" className="mt-4">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2">
                   <EntryForm
@@ -95,6 +120,7 @@ const Index = () => {
                     project={activeProject}
                     previousTasks={previousTasks}
                     yesterday={yesterday}
+                    planData={planData}
                     onSave={saveEntry}
                   />
                 </div>
@@ -105,15 +131,26 @@ const Index = () => {
               </div>
             </TabsContent>
 
-            <TabsContent value="standup">
+            <TabsContent value="planning" className="mt-4">
+              <PlanningView
+                project={activeProject}
+                planData={planData}
+                onSaveTask={savePlanTask}
+                onRemoveTask={removePlanTask}
+                onUpdateTask={updatePlanTask}
+              />
+            </TabsContent>
+
+            <TabsContent value="standup" className="mt-4">
               <StandupView
                 project={activeProject}
                 yesterday={yesterday}
                 today={currentEntry}
+                allProjectsStandup={allProjectsStandup}
               />
             </TabsContent>
 
-            <TabsContent value="timesheet">
+            <TabsContent value="timesheet" className="mt-4">
               <TimesheetView entries={entries} project={activeProject} onSave={saveEntry} />
             </TabsContent>
           </Tabs>

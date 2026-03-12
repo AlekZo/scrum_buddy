@@ -1,13 +1,22 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { Entry, createEmptyEntry, ParsedTask } from "@/lib/types";
-import { parseTasks, findMergeSuggestions, MergeSuggestion } from "@/lib/task-parser";
-import { BulletTextarea } from "@/components/BulletTextarea";
+import { PlanData } from "@/lib/plan-types";
+import { parseTasks, findMergeSuggestions, MergeSuggestion, getHistoricalTaskNames } from "@/lib/task-parser";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ParsedTasksDisplay } from "@/components/ParsedTasksDisplay";
+import { PlannedPanel } from "@/components/PlannedPanel";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2 } from "lucide-react";
+import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar } from "lucide-react";
 import { toast } from "sonner";
+import {
+  isGCalConfigured,
+  hasValidTokens,
+  getGCalSettings,
+  getFilteredEvents,
+  eventsToDoingText,
+} from "@/lib/gcal-service";
 
 interface EntryFormProps {
   entry: Entry | null;
@@ -15,13 +24,15 @@ interface EntryFormProps {
   project: string;
   previousTasks: { task: ParsedTask; date: string }[];
   yesterday: Entry | null;
+  planData: PlanData;
   onSave: (project: string, entry: Entry) => void;
 }
 
-export function EntryForm({ entry, date, project, previousTasks, yesterday, onSave }: EntryFormProps) {
+export function EntryForm({ entry, date, project, previousTasks, yesterday, planData, onSave }: EntryFormProps) {
   const [form, setForm] = useState<Entry>(entry || createEmptyEntry(date));
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
-  const [saving, setSaving] = useState(false);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [lastError, setLastError] = useState<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevDateRef = useRef(date);
   const prevProjectRef = useRef(project);
@@ -31,7 +42,6 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, onSa
   // Auto-save when switching date or project
   useEffect(() => {
     if (prevDateRef.current !== date || prevProjectRef.current !== project) {
-      // Save previous form state
       const prevForm = formRef.current;
       if (prevForm.done || prevForm.doing || prevForm.blockers) {
         const tasks = [...parseTasks(prevForm.done, "done"), ...parseTasks(prevForm.doing, "doing")];
@@ -43,24 +53,44 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, onSa
     }
     setForm(entry || createEmptyEntry(date));
     setDismissed(new Set());
-  }, [entry, date, project]); // intentionally exclude onSave to avoid loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry, date, project]);
 
-  // Debounced auto-save (1.5s after last change)
+  const doSave = useCallback((proj: string, entryToSave: Entry) => {
+    try {
+      onSave(proj, entryToSave);
+      setSaveState("saved");
+      setLastError(null);
+      setTimeout(() => setSaveState("idle"), 2000);
+    } catch (err) {
+      setSaveState("error");
+      setLastError(err instanceof Error ? err.message : "Save failed");
+      toast.error("Failed to save. Click retry or changes will be retried.");
+    }
+  }, [onSave]);
+
+  // Debounced auto-save
   const triggerAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const current = formRef.current;
       if (current.done || current.doing || current.blockers) {
+        setSaveState("saving");
         const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
         const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
-        onSave(project, { ...current, date, hours: totalHours });
-        setSaving(true);
-        setTimeout(() => setSaving(false), 1000);
+        doSave(project, { ...current, date, hours: totalHours });
       }
     }, 1500);
-  }, [project, date, onSave]);
+  }, [project, date, doSave]);
 
-  // Cleanup timer
+  const handleRetry = () => {
+    setSaveState("saving");
+    const current = formRef.current;
+    const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
+    const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
+    doSave(project, { ...current, date, hours: totalHours });
+  };
+
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -69,6 +99,14 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, onSa
 
   const updateField = (key: "done" | "doing" | "blockers", value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+    triggerAutoSave();
+  };
+
+  const appendToField = (key: "done" | "doing", text: string) => {
+    setForm((prev) => ({
+      ...prev,
+      [key]: prev[key] ? prev[key] + "\n" + text : text,
+    }));
     triggerAutoSave();
   };
 
@@ -88,6 +126,11 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, onSa
         (s) => !dismissed.has(s.currentTask.text)
       ),
     [parsedTasks, previousTasks, dismissed]
+  );
+
+  const historicalNames = useMemo(
+    () => getHistoricalTaskNames(previousTasks),
+    [previousTasks]
   );
 
   const handlePrefillFromYesterday = () => {
@@ -133,8 +176,48 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, onSa
     { key: "blockers" as const, label: "Blockers", icon: AlertTriangle, color: "text-warning", placeholder: "Waiting on API access..." },
   ];
 
+  const SaveIndicator = () => {
+    if (saveState === "saving") {
+      return (
+        <span className="flex items-center gap-1 text-xs text-muted-foreground animate-in fade-in">
+          <Loader2 className="w-3 h-3 animate-spin" />
+          Saving…
+        </span>
+      );
+    }
+    if (saveState === "saved") {
+      return (
+        <span className="flex items-center gap-1 text-xs text-success animate-in fade-in">
+          <Check className="w-3 h-3" />
+          Saved ✓
+        </span>
+      );
+    }
+    if (saveState === "error") {
+      return (
+        <span className="flex items-center gap-1 text-xs text-destructive animate-in fade-in">
+          Save failed
+          <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px] gap-0.5" onClick={handleRetry}>
+            <RefreshCw className="w-3 h-3" />
+            Retry
+          </Button>
+        </span>
+      );
+    }
+    return null;
+  };
+
   return (
     <div className="space-y-4">
+      {/* Plan reference panel */}
+      <PlannedPanel
+        planData={planData}
+        project={project}
+        date={date}
+        onPushToDone={(text) => appendToField("done", text)}
+        onPushToDoing={(text) => appendToField("doing", text)}
+      />
+
       <Card className="border-border/50">
         <CardHeader className="pb-4">
           <div className="flex items-center justify-between">
@@ -149,12 +232,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, onSa
                   {totalHours.toFixed(1)}h
                 </Badge>
               )}
-              {saving && (
-                <span className="flex items-center gap-1 text-xs text-muted-foreground animate-in fade-in">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  Saving…
-                </span>
-              )}
+              <SaveIndicator />
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -171,6 +249,32 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, onSa
               Prefill "What I did" from yesterday's plan
             </Button>
           )}
+          {isGCalConfigured() && hasValidTokens() && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5 text-xs mt-1"
+              onClick={async () => {
+                try {
+                  const settings = getGCalSettings();
+                  if (!settings) return;
+                  const events = await getFilteredEvents(date, settings.filters);
+                  if (events.length === 0) {
+                    toast.info("No matching events found for this date.");
+                    return;
+                  }
+                  const text = eventsToDoingText(events);
+                  appendToField("doing", text);
+                  toast.success(`Pulled ${events.length} events from Google Calendar`);
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Failed to fetch calendar events");
+                }
+              }}
+            >
+              <Calendar className="w-3.5 h-3.5" />
+              Pull from Google Calendar
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="space-y-4">
           {fields.map(({ key, label, icon: Icon, color, placeholder }) => (
@@ -179,11 +283,12 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, onSa
                 <Icon className="w-4 h-4" />
                 {label}
               </label>
-              <BulletTextarea
+              <RichTextEditor
                 value={form[key]}
                 onChange={(val) => updateField(key, val)}
                 placeholder={placeholder}
-                className="min-h-[80px] resize-none font-mono text-sm bg-muted/30 border-border/50 focus:bg-background transition-colors"
+                suggestions={key !== "blockers" ? historicalNames : undefined}
+                className="bg-muted/30 border-border/50 focus-within:bg-background transition-colors"
               />
             </div>
           ))}

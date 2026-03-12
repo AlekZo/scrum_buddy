@@ -1,73 +1,68 @@
-# Welcome to your Lovable project
+# Daily Scrum Logger
 
-## Project info
+A local-first daily standup tracker with offline support, planning boards, timesheets, and optional Supabase sync.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Features
 
-## How can I edit this code?
+- **Daily Log** — Track what you did, what you're doing next, and blockers with inline time parsing (`task - 2h`, `30m`, `3ч`)
+- **Planning Board** — Weekly kanban-style view to plan tasks per day
+- **Timesheet** — Auto-aggregated hours from logged tasks with utilization tracking
+- **Multi-project** — Create, rename, and switch between projects
+- **Offline-first** — All data stored in localStorage; works 100% without internet
+- **Supabase Sync** — Optional remote sync via Settings; auto-syncs on reconnect
+- **Import/Export** — Markdown, JSON, and Excel export; JSON and CSV import
+- **Auto-complete** — Task name suggestions from history as you type
+- **Tags** — Add `[frontend]`, `[meeting]` etc. to tasks for grouping in timesheets
+- **Rich Text** — Bullet points, bold (`Ctrl+B`), italic (`Ctrl+I`), code (`Ctrl+E`)
 
-There are several ways of editing your application.
+## Tech Stack
 
-**Use Lovable**
+- React 18 + TypeScript
+- Vite
+- Tailwind CSS + shadcn/ui
+- Supabase JS (optional sync)
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## Getting Started
 
-Changes made via Lovable will be committed automatically to this repo.
+```bash
+# Install dependencies
+npm install
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start dev server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+Opens at `http://localhost:8080`
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Docker
 
-**Use GitHub Codespaces**
+```bash
+# Build and run
+docker build -t scrum-logger .
+docker run -p 3000:80 scrum-logger
+```
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+Opens at `http://localhost:3000`
 
-## What technologies are used for this project?
+## Supabase Sync (Optional)
 
-This project is built with:
+1. Create a Supabase project
+2. Run `schema.sql` in the SQL Editor to create tables
+3. Click the ⚙️ Settings icon in the app header
+4. Enter your Supabase URL and anon key
+5. The app will auto-sync when online
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+## Export Formats
 
-## How can I deploy this project?
+| Format | What's included |
+|--------|----------------|
+| Markdown (.md) | Formatted log entries with bullet points |
+| JSON (.json) | Full structured data, re-importable |
+| Excel (.xlsx) | One sheet per project with columns for date, tasks, hours |
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+## Import Formats
 
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+| Format | Requirements |
+|--------|-------------|
+| JSON (.json) | Must have `projects` and `entries` keys |
+| CSV (.csv) | Needs at least a `date` column; optional: `project`, `done`, `doing`, `blockers`, `hours` |

@@ -67,12 +67,41 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
 
   const rows = useMemo(() => {
     return entries.slice(0, 14).map((entry) => {
-      // Only count "done" hours for timesheet
       const doneTasks = parseTasks(entry.done, "done");
       const totalHours = doneTasks.reduce((sum, t) => sum + t.hours, 0);
       return { entry, doneTasks, totalHours };
     });
   }, [entries]);
+
+  // Aggregate hours by task name across all visible days
+  const taskAggregation = useMemo(() => {
+    const map = new Map<string, { hours: number; days: number; tags: string[] }>();
+    for (const row of rows) {
+      for (const task of row.doneTasks) {
+        const key = task.text.toLowerCase();
+        const existing = map.get(key) || { hours: 0, days: 0, tags: task.tags };
+        existing.hours += task.hours;
+        existing.days += 1;
+        if (task.tags.length > 0) existing.tags = [...new Set([...existing.tags, ...task.tags])];
+        map.set(key, existing);
+      }
+    }
+    // Use original casing from first occurrence
+    const result: { name: string; hours: number; days: number; tags: string[] }[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      for (const task of row.doneTasks) {
+        const key = task.text.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const agg = map.get(key);
+        if (agg && agg.hours > 0) {
+          result.push({ name: task.text, ...agg });
+        }
+      }
+    }
+    return result.sort((a, b) => b.hours - a.hours);
+  }, [rows]);
 
   const grandTotal = rows.reduce((sum, r) => sum + r.totalHours, 0);
   const grandTarget = rows.length * DAILY_TARGET;
@@ -272,6 +301,60 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
             )}
           </CardContent>
         </Card>
+
+        {/* Task aggregation */}
+        {taskAggregation.length > 0 && (
+          <Card className="border-border/50">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-semibold">Hours by Task</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="hover:bg-transparent border-border/50">
+                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider">Task</TableHead>
+                    <TableHead className="w-16 text-[11px] font-semibold uppercase tracking-wider text-right">Days</TableHead>
+                    <TableHead className="w-20 text-[11px] font-semibold uppercase tracking-wider text-right">Hours</TableHead>
+                    <TableHead className="w-24 text-[11px] font-semibold uppercase tracking-wider text-right">% of Total</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {taskAggregation.map((t) => (
+                    <TableRow key={t.name} className="border-border/50">
+                      <TableCell className="py-1.5 text-xs font-mono">
+                        <span>{t.name}</span>
+                        {t.tags.length > 0 && (
+                          <span className="ml-2 inline-flex gap-1">
+                            {t.tags.map((tag) => (
+                              <Badge key={tag} variant="outline" className="text-[9px] px-1 py-0 font-normal">
+                                {tag}
+                              </Badge>
+                            ))}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="py-1.5 text-right text-xs text-muted-foreground font-mono">{t.days}</TableCell>
+                      <TableCell className="py-1.5 text-right text-xs font-mono font-semibold">{t.hours.toFixed(1)}h</TableCell>
+                      <TableCell className="py-1.5 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <div className="w-12 h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary rounded-full"
+                              style={{ width: `${grandTotal > 0 ? (t.hours / grandTotal) * 100 : 0}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] font-mono text-muted-foreground w-8 text-right">
+                            {grandTotal > 0 ? ((t.hours / grandTotal) * 100).toFixed(0) : 0}%
+                          </span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </TooltipProvider>
   );

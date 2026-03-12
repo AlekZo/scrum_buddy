@@ -26,10 +26,14 @@ export function parseTasks(text: string, source: "done" | "doing"): ParsedTask[]
     const hours = extractHours(trimmed);
     const taskText = cleanTaskText(trimmed);
 
+    const tags = extractTags(trimmed);
+    const finalText = removeTags(taskText || trimmed);
+
     tasks.push({
-      text: taskText || trimmed,
+      text: finalText,
       hours,
       source,
+      tags,
     });
   }
 
@@ -93,9 +97,41 @@ export function taskSimilarity(a: string, b: string): number {
 function normalize(text: string): string {
   return text
     .toLowerCase()
+    .replace(/\[.*?\]/g, "")
     .replace(/[^a-zа-яё0-9\s]/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Extract [tag] patterns from text
+ */
+function extractTags(text: string): string[] {
+  const matches = text.match(/\[([^\]]+)\]/g);
+  if (!matches) return [];
+  return matches.map((m) => m.slice(1, -1).trim().toLowerCase());
+}
+
+function removeTags(text: string): string {
+  return text.replace(/\s*\[[^\]]+\]\s*/g, " ").trim();
+}
+
+/**
+ * Get unique historical task names for autocomplete
+ */
+export function getHistoricalTaskNames(
+  previousTasks: { task: ParsedTask; date: string }[]
+): string[] {
+  const seen = new Map<string, string>(); // lowercase -> original casing
+  const counts = new Map<string, number>();
+  for (const { task } of previousTasks) {
+    const key = task.text.toLowerCase();
+    if (!seen.has(key)) seen.set(key, task.text);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([key]) => seen.get(key) || key);
 }
 
 export interface MergeSuggestion {
