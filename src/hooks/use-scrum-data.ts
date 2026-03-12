@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { ScrumData, Entry, createEmptyEntry, getToday } from "@/lib/types";
 import { loadData, saveData } from "@/lib/storage";
-import { syncNow, initNetworkListeners, getCredentials } from "@/lib/sync-service";
+import { syncNow, initNetworkListeners, getCredentials, trackDeletedEntry, trackDeletedProject } from "@/lib/sync-service";
 
 export function useScrumData() {
   const [data, setData] = useState<ScrumData>(loadData);
@@ -9,6 +9,9 @@ export function useScrumData() {
   const [selectedDate, setSelectedDate] = useState<string>(getToday());
   const dataRef = useRef(data);
   dataRef.current = data;
+
+  // Track whether a change came from sync (to avoid re-triggering sync)
+  const fromSyncRef = useRef(false);
 
   useEffect(() => {
     if (!activeProject && data.projects.length > 0) {
@@ -18,18 +21,29 @@ export function useScrumData() {
 
   // Persist to localStorage on every change
   useEffect(() => {
-    saveData(data);
+    try {
+      saveData(data);
+    } catch (err) {
+      console.error("[storage] Failed to save:", err);
+    }
   }, [data]);
 
-  // Debounced sync after data changes
+  // Debounced sync after USER-initiated data changes (not sync-initiated)
   const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (fromSyncRef.current) {
+      fromSyncRef.current = false;
+      return; // Skip sync trigger for sync-originated updates
+    }
     if (!getCredentials()) return;
     if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
     syncTimerRef.current = setTimeout(() => {
       syncNow(dataRef.current, (merged) => {
-        setData(merged);
-      });
+        if (JSON.stringify(dataRef.current) !== JSON.stringify(merged)) {
+          fromSyncRef.current = true;
+          setData(merged);
+        }
+      }, () => dataRef.current);
     }, 3000);
     return () => {
       if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
@@ -40,20 +54,50 @@ export function useScrumData() {
   useEffect(() => {
     const cleanup = initNetworkListeners(
       () => dataRef.current,
-      (merged) => setData(merged)
+      (merged) => {
+        if (JSON.stringify(dataRef.current) !== JSON.stringify(merged)) {
+          fromSyncRef.current = true;
+          setData(merged);
+        }
+      }
     );
     return cleanup;
+  }, []);
+
+  // Cross-tab sync via storage event
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === "daily-scrum-logger" && e.newValue) {
+        try {
+          const newData = JSON.parse(e.newValue) as ScrumData;
+          fromSyncRef.current = true;
+          setData(newData);
+        } catch { /* ignore parse errors */ }
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
   }, []);
 
   // Initial sync on mount
   useEffect(() => {
     if (getCredentials() && navigator.onLine) {
-      syncNow(dataRef.current, (merged) => setData(merged));
+      syncNow(dataRef.current, (merged) => {
+        if (JSON.stringify(dataRef.current) !== JSON.stringify(merged)) {
+          fromSyncRef.current = true;
+          setData(merged);
+        }
+      }, () => dataRef.current);
     }
   }, []);
 
   const triggerSync = useCallback(() => {
-    syncNow(dataRef.current, (merged) => setData(merged));
+    syncNow(dataRef.current, (merged) => {
+      if (JSON.stringify(dataRef.current) !== JSON.stringify(merged)) {
+        fromSyncRef.current = true;
+        setData(merged);
+      }
+    }, () => dataRef.current);
   }, []);
 
   const getEntry = useCallback(
@@ -90,12 +134,25 @@ export function useScrumData() {
 
   const removeProject = useCallback((name: string) => {
     setData((prev) => {
+      const removedEntries = prev.entries[name];
+      if (removedEntries) {
+        Object.keys(removedEntries).forEach((id) => trackDeletedEntry(id));
+      }
+      trackDeletedProject(name);
+
       const { [name]: _, ...rest } = prev.entries;
+      const newProjects = prev.projects.filter((p) => p !== name);
       return {
         ...prev,
-        projects: prev.projects.filter((p) => p !== name),
+        projects: newProjects,
         entries: rest,
       };
+    });
+    // Reset activeProject if it was the deleted one
+    setActiveProject((current) => {
+      if (current !== name) return current;
+      const latest = dataRef.current.projects.filter((p) => p !== name);
+      return latest.length > 0 ? latest[0] : "";
     });
   }, []);
 
@@ -111,8 +168,8 @@ export function useScrumData() {
         },
       };
     });
-    if (activeProject === oldName) setActiveProject(newName);
-  }, [activeProject]);
+    setActiveProject((current) => (current === oldName ? newName : current));
+  }, []);
 
   const getEntriesForProject = useCallback(
     (project: string): Entry[] => {
@@ -129,6 +186,44 @@ export function useScrumData() {
     setData(newData);
     if (newData.projects.length > 0) setActiveProject(newData.projects[0]);
   }, []);
+
+  /**
+   * Update version on all entries across projects that share task text with the given entry.
+   * Looks for entries with similar "done" or "doing" content and sets their version.
+   */
+  const updateDuplicateVersions = useCallback(
+    (sourceEntry: Entry, version: string) => {
+      const sourceLines = new Set(
+        [...sourceEntry.done.split("\n"), ...sourceEntry.doing.split("\n")]
+          .map((l) => l.trim().replace(/^[-•*]\s*/, "").toLowerCase())
+          .filter(Boolean)
+      );
+      if (sourceLines.size === 0) return 0;
+
+      let count = 0;
+      setData((prev) => {
+        const next = structuredClone(prev);
+        for (const proj of next.projects) {
+          const entries = next.entries[proj];
+          if (!entries) continue;
+          for (const entry of Object.values(entries)) {
+            if (entry.id === sourceEntry.id) continue;
+            const entryLines = [...entry.done.split("\n"), ...entry.doing.split("\n")]
+              .map((l) => l.trim().replace(/^[-•*]\s*/, "").toLowerCase())
+              .filter(Boolean);
+            const overlap = entryLines.filter((l) => sourceLines.has(l)).length;
+            if (overlap > 0 && overlap >= entryLines.length * 0.5) {
+              entry.version = version;
+              count++;
+            }
+          }
+        }
+        return next;
+      });
+      return count;
+    },
+    []
+  );
 
   const currentEntry = getEntry(activeProject, selectedDate);
 
@@ -148,5 +243,6 @@ export function useScrumData() {
     getEntriesForProject,
     createEmptyEntry,
     triggerSync,
+    updateDuplicateVersions,
   };
 }

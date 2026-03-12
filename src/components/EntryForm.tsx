@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ParsedTasksDisplay } from "@/components/ParsedTasksDisplay";
 import { PlannedPanel } from "@/components/PlannedPanel";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar } from "lucide-react";
+import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar, Sparkles, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   isGCalConfigured,
@@ -17,6 +17,7 @@ import {
   getFilteredEvents,
   eventsToDoingText,
 } from "@/lib/gcal-service";
+import { isAIConfigured, mergeTasks, polishText } from "@/lib/ai-service";
 
 interface EntryFormProps {
   entry: Entry | null;
@@ -26,12 +27,15 @@ interface EntryFormProps {
   yesterday: Entry | null;
   planData: PlanData;
   onSave: (project: string, entry: Entry) => void;
+  onUpdateDuplicateVersions?: (sourceEntry: Entry, version: string) => number;
 }
 
-export function EntryForm({ entry, date, project, previousTasks, yesterday, planData, onSave }: EntryFormProps) {
+export function EntryForm({ entry, date, project, previousTasks, yesterday, planData, onSave, onUpdateDuplicateVersions }: EntryFormProps) {
   const [form, setForm] = useState<Entry>(entry || createEmptyEntry(date));
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [merging, setMerging] = useState(false);
+  const [polishing, setPolishing] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevDateRef = useRef(date);
@@ -93,13 +97,64 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
 
   useEffect(() => {
     return () => {
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        // Force immediate save of pending changes before unmount
+        const current = formRef.current;
+        if (current.done || current.doing || current.blockers) {
+          const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
+          const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
+          onSave(prevProjectRef.current, { ...current, hours: totalHours });
+        }
+      }
     };
   }, []);
 
   const updateField = (key: "done" | "doing" | "blockers", value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     triggerAutoSave();
+  };
+
+  const updateVersion = (version: string) => {
+    setForm((prev) => ({ ...prev, version }));
+    triggerAutoSave();
+  };
+
+  const handleAIMerge = async (field: "done" | "doing") => {
+    const text = form[field];
+    if (!text.trim()) return;
+    const lines = text.split("\n").filter((l) => l.trim());
+    if (lines.length < 2) {
+      toast.info("Need at least 2 lines to merge");
+      return;
+    }
+    setMerging(true);
+    try {
+      const merged = await mergeTasks(lines);
+      setForm((prev) => ({ ...prev, [field]: merged }));
+      triggerAutoSave();
+      toast.success("Tasks merged by AI");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "AI merge failed");
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  const handleAIPolish = async (field: "done" | "doing") => {
+    const text = form[field];
+    if (!text.trim()) return;
+    setPolishing(field);
+    try {
+      const polished = await polishText(text);
+      setForm((prev) => ({ ...prev, [field]: polished }));
+      triggerAutoSave();
+      toast.success("Text polished by AI ✨");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "AI polish failed");
+    } finally {
+      setPolishing(null);
+    }
   };
 
   const appendToField = (key: "done" | "doing", text: string) => {
@@ -236,7 +291,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
             </div>
           </div>
           <p className="text-xs text-muted-foreground">
-            Add hours inline: <span className="font-mono bg-muted px-1 rounded">task - 2h</span> or <span className="font-mono bg-muted px-1 rounded">task - 3ч</span> or <span className="font-mono bg-muted px-1 rounded">task (30m)</span>
+            Hours: <span className="font-mono bg-muted px-1 rounded">task - 2h</span> · Dual: <span className="font-mono bg-muted px-1 rounded">task - 1h/3h</span> <span className="text-[10px]">(actual/team)</span> · Also: <span className="font-mono bg-muted px-1 rounded">30m</span> <span className="font-mono bg-muted px-1 rounded">3ч</span>
           </p>
           {yesterday?.doing && (
             <Button
@@ -277,12 +332,69 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
           )}
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Version input */}
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-muted-foreground shrink-0">Version:</label>
+            <input
+              value={form.version || ""}
+              onChange={(e) => updateVersion(e.target.value)}
+              placeholder="e.g. v2, sprint-3"
+              className="h-6 text-xs font-mono bg-muted/30 border border-border/50 rounded px-2 w-32 focus:outline-none focus:ring-1 focus:ring-primary/50"
+            />
+            {form.version && onUpdateDuplicateVersions && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-6 text-[10px] gap-1 text-muted-foreground px-2"
+                onClick={() => {
+                  const count = onUpdateDuplicateVersions(form, form.version!);
+                  if (count > 0) {
+                    toast.success(`Updated version on ${count} similar entr${count === 1 ? "y" : "ies"}`);
+                  } else {
+                    toast.info("No similar entries found to update");
+                  }
+                }}
+              >
+                <RefreshCw className="w-3 h-3" />
+                Update duplicates
+              </Button>
+            )}
+          </div>
+
           {fields.map(({ key, label, icon: Icon, color, placeholder }) => (
             <div key={key} className="space-y-1.5">
-              <label className={`flex items-center gap-1.5 text-sm font-medium ${color}`}>
-                <Icon className="w-4 h-4" />
-                {label}
-              </label>
+              <div className="flex items-center justify-between">
+                <label className={`flex items-center gap-1.5 text-sm font-medium ${color}`}>
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </label>
+                {isAIConfigured() && key !== "blockers" && (
+                  <div className="flex items-center gap-0.5">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-5 text-[10px] gap-1 text-muted-foreground px-1.5"
+                      disabled={polishing === key}
+                      onClick={() => handleAIPolish(key)}
+                      title="Rewrite shorthand into professional text"
+                    >
+                      {polishing === key ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                      Polish
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-5 text-[10px] gap-1 text-muted-foreground px-1.5"
+                      disabled={merging}
+                      onClick={() => handleAIMerge(key)}
+                      title="Merge & deduplicate tasks with AI"
+                    >
+                      {merging ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      Merge
+                    </Button>
+                  </div>
+                )}
+              </div>
               <RichTextEditor
                 value={form[key]}
                 onChange={(val) => updateField(key, val)}

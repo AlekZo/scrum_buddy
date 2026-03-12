@@ -1,5 +1,6 @@
 import { Entry } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Clock, History } from "lucide-react";
 
 interface RecentEntriesProps {
@@ -33,6 +34,9 @@ export function RecentEntries({ entries, onSelectDate }: RecentEntriesProps) {
                   {new Date(entry.date).toLocaleDateString("en", { weekday: "short", month: "short", day: "numeric" })}
                 </span>
                 <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  {entry.version && (
+                    <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono">{entry.version}</Badge>
+                  )}
                   <Clock className="w-3 h-3" />
                   {entry.hours}h
                 </span>

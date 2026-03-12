@@ -14,7 +14,11 @@ function loadPlanData(): PlanData {
 }
 
 function savePlanData(data: PlanData): void {
-  localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(data));
+  try {
+    localStorage.setItem(PLAN_STORAGE_KEY, JSON.stringify(data));
+  } catch (err) {
+    console.error("[storage] Failed to save plan data:", err);
+  }
 }
 
 export function usePlanData() {
@@ -23,6 +27,19 @@ export function usePlanData() {
   useEffect(() => {
     savePlanData(planData);
   }, [planData]);
+
+  // Cross-tab sync for plan data
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === PLAN_STORAGE_KEY && e.newValue) {
+        try {
+          setPlanData(JSON.parse(e.newValue) as PlanData);
+        } catch { /* ignore */ }
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
 
   const savePlanTask = useCallback((task: PlanTask) => {
     setPlanData((prev) => ({

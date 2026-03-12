@@ -4,6 +4,7 @@ import { loadData, saveData } from "./storage";
 
 // ─── Credentials ───
 const CREDS_KEY = "supabase-credentials";
+const DELETED_KEY = "sync-deleted-ids"; // tombstone tracker
 
 export interface SupabaseCredentials {
   url: string;
@@ -28,6 +29,48 @@ export function saveCredentials(creds: SupabaseCredentials): void {
 
 export function clearCredentials(): void {
   localStorage.removeItem(CREDS_KEY);
+}
+
+// ─── Deletion tombstones ───
+interface DeletedIds {
+  entries: string[];
+  projects: string[];
+}
+
+function getDeletedIds(): DeletedIds {
+  try {
+    const raw = localStorage.getItem(DELETED_KEY);
+    if (!raw) return { entries: [], projects: [] };
+    return JSON.parse(raw);
+  } catch {
+    return { entries: [], projects: [] };
+  }
+}
+
+function saveDeletedIds(ids: DeletedIds): void {
+  try {
+    localStorage.setItem(DELETED_KEY, JSON.stringify(ids));
+  } catch { /* best-effort */ }
+}
+
+export function trackDeletedEntry(entryId: string): void {
+  const ids = getDeletedIds();
+  if (!ids.entries.includes(entryId)) {
+    ids.entries.push(entryId);
+    saveDeletedIds(ids);
+  }
+}
+
+export function trackDeletedProject(projectName: string): void {
+  const ids = getDeletedIds();
+  if (!ids.projects.includes(projectName)) {
+    ids.projects.push(projectName);
+    saveDeletedIds(ids);
+  }
+}
+
+function clearDeletedIds(): void {
+  saveDeletedIds({ entries: [], projects: [] });
 }
 
 // ─── Client singleton ───
@@ -63,7 +106,6 @@ let currentSyncStatus: SyncStatus = "unconfigured";
 
 export function onSyncStatus(listener: SyncListener): () => void {
   syncListeners.push(listener);
-  // Emit current status immediately
   listener(currentSyncStatus);
   return () => {
     syncListeners = syncListeners.filter((l) => l !== listener);
@@ -80,7 +122,8 @@ let syncInProgress = false;
 
 export async function syncNow(
   localData: ScrumData,
-  onDataMerged?: (data: ScrumData) => void
+  onDataMerged?: (data: ScrumData) => void,
+  getLatestData?: () => ScrumData
 ): Promise<void> {
   if (syncInProgress) return;
 
@@ -99,8 +142,34 @@ export async function syncNow(
   emitStatus("syncing");
 
   try {
+    const deletedIds = getDeletedIds();
+
+    // ─── PUSH: Soft-delete entries ───
+    if (deletedIds.entries.length > 0) {
+      for (let i = 0; i < deletedIds.entries.length; i += 100) {
+        const chunk = deletedIds.entries.slice(i, i + 100);
+        await sb
+          .from("entries")
+          .update({ is_deleted: true, updated_at: new Date().toISOString() })
+          .in("id", chunk);
+      }
+    }
+
+    // ─── PUSH: Soft-delete projects ───
+    if (deletedIds.projects.length > 0) {
+      for (const projName of deletedIds.projects) {
+        await sb
+          .from("projects")
+          .update({ is_deleted: true })
+          .eq("name", projName);
+      }
+    }
+
+    // Clear tombstones after pushing
+    clearDeletedIds();
+
     // ─── PUSH: Projects ───
-    const projectRows = localData.projects.map((name) => ({ name }));
+    const projectRows = localData.projects.map((name) => ({ name, is_deleted: false }));
     if (projectRows.length > 0) {
       const { error: projErr } = await sb
         .from("projects")
@@ -109,6 +178,7 @@ export async function syncNow(
     }
 
     // ─── PUSH: Entries ───
+    const now = new Date().toISOString();
     const entryRows: Array<{
       id: string;
       project_name: string;
@@ -117,7 +187,9 @@ export async function syncNow(
       doing: string;
       blockers: string;
       hours: number;
+      version: string;
       updated_at: string;
+      is_deleted: boolean;
     }> = [];
 
     for (const project of localData.projects) {
@@ -132,13 +204,14 @@ export async function syncNow(
           doing: entry.doing,
           blockers: entry.blockers,
           hours: entry.hours,
-          updated_at: new Date().toISOString(),
+          version: entry.version || "",
+          updated_at: now,
+          is_deleted: false,
         });
       }
     }
 
     if (entryRows.length > 0) {
-      // Batch in chunks of 100
       for (let i = 0; i < entryRows.length; i += 100) {
         const chunk = entryRows.slice(i, i + 100);
         const { error: entErr } = await sb
@@ -148,19 +221,22 @@ export async function syncNow(
       }
     }
 
-    // ─── PULL: Merge remote data into local ───
+    // ─── PULL: Merge remote data into local (with conflict resolution) ───
     const { data: remoteProjects, error: rpErr } = await sb
       .from("projects")
-      .select("name");
+      .select("name, is_deleted")
+      .eq("is_deleted", false);
     if (rpErr) throw rpErr;
 
     const { data: remoteEntries, error: reErr } = await sb
       .from("entries")
-      .select("*");
+      .select("*")
+      .eq("is_deleted", false);
     if (reErr) throw reErr;
 
-    // Merge
-    const merged = structuredClone(localData);
+    // Use LATEST local data at merge time
+    const latestLocal = getLatestData ? getLatestData() : localData;
+    const merged = structuredClone(latestLocal);
 
     // Add remote projects not in local
     for (const rp of remoteProjects || []) {
@@ -169,13 +245,16 @@ export async function syncNow(
       }
     }
 
-    // Add remote entries not in local
+    // Merge remote entries with timestamp-based conflict resolution
     for (const re of remoteEntries || []) {
       if (!merged.entries[re.project_name]) {
         merged.entries[re.project_name] = {};
       }
-      // Only add if not already present locally (local is primary)
-      if (!merged.entries[re.project_name][re.id]) {
+
+      const localEntry = merged.entries[re.project_name][re.id];
+
+      if (!localEntry) {
+        // Remote-only: add it
         merged.entries[re.project_name][re.id] = {
           id: re.id,
           date: re.date,
@@ -183,7 +262,28 @@ export async function syncNow(
           doing: re.doing || "",
           blockers: re.blockers || "",
           hours: Number(re.hours) || 0,
+          version: re.version || "",
         };
+      } else if (re.updated_at) {
+        // Both exist: keep the newer one based on updated_at
+        // Local entries pushed this sync have `now` as updated_at,
+        // so remote wins only if its timestamp is strictly newer
+        const remoteTime = new Date(re.updated_at).getTime();
+        const pushTime = new Date(now).getTime();
+
+        if (remoteTime > pushTime) {
+          // Remote is newer (edited on another device after our push)
+          merged.entries[re.project_name][re.id] = {
+            id: re.id,
+            date: re.date,
+            done: re.done || "",
+            doing: re.doing || "",
+            blockers: re.blockers || "",
+            hours: Number(re.hours) || 0,
+            version: re.version || "",
+          };
+        }
+        // Otherwise local wins (same or newer)
       }
     }
 
@@ -226,7 +326,6 @@ export function initNetworkListeners(
   window.addEventListener("offline", handleOffline);
   networkListenersAttached = true;
 
-  // Set initial status
   if (!navigator.onLine) {
     emitStatus("offline");
   } else if (!getCredentials()) {

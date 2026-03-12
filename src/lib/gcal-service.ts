@@ -34,6 +34,7 @@ export interface GCalEvent {
   start: string; // ISO datetime
   end: string;
   durationHours: number;
+  isAllDay: boolean;
   attendees: string[];
   calendarEmail: string;
 }
@@ -148,12 +149,13 @@ export async function handleOAuthCallback(): Promise<GCalToken | null> {
     addOrUpdateToken(token);
     return token;
   } catch {
-    // Still save token even without email
+    // Use a stable fallback accountId based on the token itself to prevent duplicates
+    const stableId = "unknown-" + accessToken.slice(-16);
     const token: GCalToken = {
       accessToken,
       expiresAt: Date.now() + expiresIn * 1000,
       email: "unknown",
-      accountId: crypto.randomUUID(),
+      accountId: stableId,
     };
     addOrUpdateToken(token);
     return token;
@@ -173,57 +175,77 @@ async function fetchCalendarEvents(
   const dayStart = new Date(dateStr + "T00:00:00");
   const dayEnd = new Date(dateStr + "T23:59:59");
 
-  const params = new URLSearchParams({
-    timeMin: dayStart.toISOString(),
-    timeMax: dayEnd.toISOString(),
-    singleEvents: "true",
-    orderBy: "startTime",
-    maxResults: "50",
-  });
+  const allEvents: GCalEvent[] = [];
+  let pageToken: string | undefined;
 
-  const res = await fetch(
-    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
-    { headers: { Authorization: `Bearer ${token.accessToken}` } }
-  );
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Google Calendar API error (${res.status}): ${err}`);
-  }
-
-  const data = await res.json();
-  const events: GCalEvent[] = [];
-
-  for (const item of data.items || []) {
-    if (item.status === "cancelled") continue;
-
-    const start = item.start?.dateTime || item.start?.date;
-    const end = item.end?.dateTime || item.end?.date;
-    if (!start || !end) continue;
-
-    const startMs = new Date(start).getTime();
-    const endMs = new Date(end).getTime();
-    const durationHours = Math.round(((endMs - startMs) / 3600000) * 100) / 100;
-
-    events.push({
-      id: item.id,
-      summary: item.summary || "(No title)",
-      start,
-      end,
-      durationHours,
-      attendees: (item.attendees || []).map((a: any) => a.email || ""),
-      calendarEmail: token.email,
+  // Paginated fetch loop
+  do {
+    const params = new URLSearchParams({
+      timeMin: dayStart.toISOString(),
+      timeMax: dayEnd.toISOString(),
+      singleEvents: "true",
+      orderBy: "startTime",
+      maxResults: "250", // max allowed by Google API
     });
-  }
+    if (pageToken) params.set("pageToken", pageToken);
 
-  return events;
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+      { headers: { Authorization: `Bearer ${token.accessToken}` } }
+    );
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Google Calendar API error (${res.status}): ${err}`);
+    }
+
+    const data = await res.json();
+
+    for (const item of data.items || []) {
+      if (item.status === "cancelled") continue;
+
+      // Detect all-day events (use `date` field, not `dateTime`)
+      const isAllDay = !!item.start?.date && !item.start?.dateTime;
+
+      const start = item.start?.dateTime || item.start?.date;
+      const end = item.end?.dateTime || item.end?.date;
+      if (!start || !end) continue;
+
+      let durationHours: number;
+      if (isAllDay) {
+        // All-day events: set duration to 0 (don't count as work hours)
+        durationHours = 0;
+      } else {
+        const startMs = new Date(start).getTime();
+        const endMs = new Date(end).getTime();
+        durationHours = Math.round(((endMs - startMs) / 3600000) * 100) / 100;
+      }
+
+      allEvents.push({
+        id: item.id,
+        summary: item.summary || "(No title)",
+        start,
+        end,
+        durationHours,
+        isAllDay,
+        attendees: (item.attendees || []).map((a: any) => a.email || ""),
+        calendarEmail: token.email,
+      });
+    }
+
+    pageToken = data.nextPageToken;
+  } while (pageToken);
+
+  return allEvents;
 }
 
 // ── Filtering ──
 
 function matchesFilters(event: GCalEvent, filters: GCalFilters): boolean {
   const name = event.summary.toLowerCase();
-  const durationMin = event.durationHours * 60;
+
+  // For all-day events, use 0 duration for filtering purposes
+  const durationMin = event.isAllDay ? 0 : event.durationHours * 60;
 
   // Duration filters
   if (filters.minDurationMinutes > 0 && durationMin < filters.minDurationMinutes) return false;
@@ -297,6 +319,7 @@ export async function getFilteredEvents(
 export function eventsToDoingText(events: GCalEvent[]): string {
   return events
     .map((e) => {
+      if (e.isAllDay) return `• ${e.summary} (all day)`;
       const hours = e.durationHours;
       const timeStr = hours >= 1 ? `${hours}h` : `${Math.round(hours * 60)}m`;
       return `• ${e.summary} - ${timeStr}`;
@@ -310,5 +333,6 @@ export function isGCalConfigured(): boolean {
 }
 
 export function hasValidTokens(): boolean {
-  return getGCalTokens().some((t) => Date.now() < t.expiresAt);
+  const BUFFER_MS = 60_000; // 1 minute buffer for in-flight requests
+  return getGCalTokens().some((t) => Date.now() + BUFFER_MS < t.expiresAt);
 }

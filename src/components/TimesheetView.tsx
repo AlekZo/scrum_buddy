@@ -1,6 +1,8 @@
 import { useState, useMemo } from "react";
 import { Entry } from "@/lib/types";
+import { PlanData, getPlannedTasksForDate, getWeekStart, getWeekDays } from "@/lib/plan-types";
 import { parseTasks } from "@/lib/task-parser";
+import { BufferBankWidget } from "@/components/BufferBankWidget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -27,6 +29,7 @@ interface TimesheetViewProps {
   entries: Entry[];
   project: string;
   onSave: (project: string, entry: Entry) => void;
+  planData: PlanData;
 }
 
 const DAILY_TARGET = 8;
@@ -60,7 +63,7 @@ function TruncatedCell({ text, maxWidth = "250px" }: { text: string; maxWidth?: 
   );
 }
 
-export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) {
+export function TimesheetView({ entries, project, onSave, planData }: TimesheetViewProps) {
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [editDone, setEditDone] = useState("");
   const [editDoing, setEditDoing] = useState("");
@@ -69,9 +72,20 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
     return entries.slice(0, 14).map((entry) => {
       const doneTasks = parseTasks(entry.done, "done");
       const totalHours = doneTasks.reduce((sum, t) => sum + t.hours, 0);
-      return { entry, doneTasks, totalHours };
+      // Logged dual hours from "What I did" text
+      const loggedTeamHours = doneTasks.reduce((sum, t) => sum + t.teamHours, 0);
+      const loggedActualHours = doneTasks.reduce((sum, t) => sum + t.actualHours, 0);
+      // Planned hours from Planning tab
+      const planned = getPlannedTasksForDate(planData, project, entry.date);
+      const plannedTeamHours = planned.reduce((sum, t) => sum + t.teamHours, 0);
+      const plannedActualHours = planned.reduce((sum, t) => sum + t.actualHours, 0);
+      // Use logged dual hours if available (any task has different actual vs team), else fall back to planned
+      const hasDualLogged = doneTasks.some(t => t.actualHours !== t.teamHours);
+      const teamHours = hasDualLogged ? loggedTeamHours : (plannedTeamHours || loggedTeamHours);
+      const actualHours = hasDualLogged ? loggedActualHours : (plannedActualHours || loggedActualHours);
+      return { entry, doneTasks, totalHours, teamHours, actualHours };
     });
-  }, [entries]);
+  }, [entries, planData, project]);
 
   // Aggregate hours by task name across all visible days
   const taskAggregation = useMemo(() => {
@@ -104,7 +118,12 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
   }, [rows]);
 
   const grandTotal = rows.reduce((sum, r) => sum + r.totalHours, 0);
-  const grandTarget = rows.length * DAILY_TARGET;
+  const workdayCount = rows.filter((r) => {
+    const d = new Date(r.entry.date + "T00:00:00");
+    const day = d.getDay();
+    return day !== 0 && day !== 6;
+  }).length;
+  const grandTarget = workdayCount * DAILY_TARGET;
   const grandUtil = grandTarget > 0 ? (grandTotal / grandTarget) * 100 : 0;
 
   const startEdit = (entry: Entry) => {
@@ -122,11 +141,17 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
   };
 
   const fmtDay = (date: string) => {
-    const d = new Date(date);
+    const d = new Date(date + "T00:00:00"); // Force local timezone
     return {
       weekday: d.toLocaleDateString("en", { weekday: "short" }),
       display: d.toLocaleDateString("en", { month: "short", day: "numeric" }),
     };
+  };
+
+  const isWeekend = (date: string) => {
+    const d = new Date(date + "T00:00:00");
+    const day = d.getDay();
+    return day === 0 || day === 6;
   };
 
   const utilColor = (hours: number) => {
@@ -145,9 +170,26 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
     return "bg-destructive/10";
   };
 
+  // Calculate date range for buffer bank
+  const dateRange = useMemo(() => {
+    if (rows.length === 0) return { from: "", to: "" };
+    const dates = rows.map(r => r.entry.date).sort();
+    return { from: dates[0], to: dates[dates.length - 1] };
+  }, [rows]);
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="space-y-4">
+        {/* Buffer Bank */}
+        {dateRange.from && (
+          <BufferBankWidget
+            planData={planData}
+            project={project}
+            from={dateRange.from}
+            to={dateRange.to}
+            entries={entries}
+          />
+        )}
         {/* Summary row */}
         <Card className="border-border/50">
           <CardHeader className="pb-3">
@@ -156,7 +198,7 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
               Timesheet · {project}
             </CardTitle>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span>{rows.length} days</span>
+              <span>{rows.length} days ({workdayCount} workdays)</span>
               <span>Target: <span className="font-mono font-semibold text-foreground">{DAILY_TARGET}h/day</span></span>
               <span>Logged: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandTotal.toFixed(1)}h</span></span>
               <span>Utilization: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandUtil.toFixed(0)}%</span></span>
@@ -176,13 +218,15 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent border-border/50">
-                    <TableHead className="w-24 text-[11px] font-semibold uppercase tracking-wider">Date</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider">What I Did</TableHead>
-                    <TableHead className="text-[11px] font-semibold uppercase tracking-wider">Doing Next</TableHead>
-                    <TableHead className="w-20 text-[11px] font-semibold uppercase tracking-wider text-right">Logged</TableHead>
-                    <TableHead className="w-20 text-[11px] font-semibold uppercase tracking-wider text-right">Target</TableHead>
-                    <TableHead className="w-16 text-[11px] font-semibold uppercase tracking-wider text-right">Util%</TableHead>
-                    <TableHead className="w-10" />
+                     <TableHead className="w-24 text-[11px] font-semibold uppercase tracking-wider">Date</TableHead>
+                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider">What I Did</TableHead>
+                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider">Doing Next</TableHead>
+                     <TableHead className="w-20 text-[11px] font-semibold uppercase tracking-wider text-right">Logged</TableHead>
+                     <TableHead className="w-16 text-[11px] font-semibold uppercase tracking-wider text-right">Team</TableHead>
+                     <TableHead className="w-16 text-[11px] font-semibold uppercase tracking-wider text-right">Actual</TableHead>
+                     <TableHead className="w-20 text-[11px] font-semibold uppercase tracking-wider text-right">Target</TableHead>
+                     <TableHead className="w-16 text-[11px] font-semibold uppercase tracking-wider text-right">Util%</TableHead>
+                     <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -225,6 +269,12 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
                             </Badge>
                           </TableCell>
                           <TableCell className="align-top py-2 text-right font-mono text-xs text-muted-foreground">
+                            {row.teamHours > 0 ? `${row.teamHours.toFixed(1)}h` : "—"}
+                          </TableCell>
+                          <TableCell className="align-top py-2 text-right font-mono text-xs text-muted-foreground">
+                            {row.actualHours > 0 ? `${row.actualHours.toFixed(1)}h` : "—"}
+                          </TableCell>
+                          <TableCell className="align-top py-2 text-right font-mono text-xs text-muted-foreground">
                             {DAILY_TARGET}h
                           </TableCell>
                           <TableCell className="align-top py-2" />
@@ -264,6 +314,12 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
                           </span>
                         </TableCell>
                         <TableCell className="py-2 text-right font-mono text-xs text-muted-foreground">
+                          {row.teamHours > 0 ? `${row.teamHours.toFixed(1)}h` : "—"}
+                        </TableCell>
+                        <TableCell className="py-2 text-right font-mono text-xs text-muted-foreground">
+                          {row.actualHours > 0 ? `${row.actualHours.toFixed(1)}h` : "—"}
+                        </TableCell>
+                        <TableCell className="py-2 text-right font-mono text-xs text-muted-foreground">
                           {DAILY_TARGET}h
                         </TableCell>
                         <TableCell className="py-2 text-right">
@@ -285,6 +341,12 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
                     <TableCell className="py-2" />
                     <TableCell className="py-2 text-right font-mono text-sm font-bold">
                       {grandTotal.toFixed(1)}h
+                    </TableCell>
+                    <TableCell className="py-2 text-right font-mono text-xs font-semibold text-muted-foreground">
+                      {rows.reduce((s, r) => s + r.teamHours, 0).toFixed(1)}h
+                    </TableCell>
+                    <TableCell className="py-2 text-right font-mono text-xs font-semibold text-muted-foreground">
+                      {rows.reduce((s, r) => s + r.actualHours, 0).toFixed(1)}h
                     </TableCell>
                     <TableCell className="py-2 text-right font-mono text-xs text-muted-foreground">
                       {grandTarget}h
@@ -322,16 +384,14 @@ export function TimesheetView({ entries, project, onSave }: TimesheetViewProps) 
                   {taskAggregation.map((t) => (
                     <TableRow key={t.name} className="border-border/50">
                       <TableCell className="py-1.5 text-xs font-mono">
-                        <span>{t.name}</span>
-                        {t.tags.length > 0 && (
-                          <span className="ml-2 inline-flex gap-1">
-                            {t.tags.map((tag) => (
-                              <Badge key={tag} variant="outline" className="text-[9px] px-1 py-0 font-normal">
-                                {tag}
-                              </Badge>
-                            ))}
-                          </span>
-                        )}
+                        <div className="flex flex-wrap items-center gap-1">
+                          <span className="truncate max-w-[200px]">{t.name}</span>
+                          {t.tags.length > 0 && t.tags.map((tag) => (
+                            <Badge key={tag} variant="outline" className="text-[9px] px-1 py-0 font-normal flex-shrink-0">
+                              {tag}
+                            </Badge>
+                          ))}
+                        </div>
                       </TableCell>
                       <TableCell className="py-1.5 text-right text-xs text-muted-foreground font-mono">{t.days}</TableCell>
                       <TableCell className="py-1.5 text-right text-xs font-mono font-semibold">{t.hours.toFixed(1)}h</TableCell>

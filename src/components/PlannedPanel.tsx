@@ -23,10 +23,21 @@ export function PlannedPanel({ planData, project, date, onPushToDone, onPushToDo
 
   if (plannedTasks.length === 0) return null;
 
-  const totalHours = plannedTasks.reduce((sum, t) => sum + t.hours, 0);
+  const totalTeamHours = plannedTasks.reduce((sum, t) => sum + t.teamHours, 0);
+  const totalActualHours = plannedTasks.reduce((sum, t) => sum + t.actualHours, 0);
 
-  const pushAllTo = (target: "done" | "doing") => {
-    const text = plannedTasks.map((t) => `• ${t.text}${t.hours > 0 ? ` - ${t.hours}h` : ""}`).join("\n");
+  const formatTaskHours = (t: PlanTask): string => {
+    if (t.teamHours > 0 && t.actualHours > 0) return ` - ${t.actualHours}h`;
+    if (t.teamHours > 0) return ` - ${t.teamHours}h`;
+    if (t.actualHours > 0) return ` - ${t.actualHours}h`;
+    return "";
+  };
+
+  const pushAllTo = (target: "done" | "doing", useTeamHours = false) => {
+    const text = plannedTasks.map((t) => {
+      const hrs = useTeamHours ? t.teamHours : (t.actualHours || t.teamHours);
+      return `• ${t.text}${hrs > 0 ? ` - ${hrs}h` : ""}`;
+    }).join("\n");
     if (target === "done") onPushToDone(text);
     else onPushToDoing(text);
   };
@@ -40,10 +51,19 @@ export function PlannedPanel({ planData, project, date, onPushToDone, onPushToDo
             Planned for this day
           </CardTitle>
           <div className="flex items-center gap-1.5">
-            {totalHours > 0 && (
-              <Badge variant="secondary" className="font-mono text-[10px]">
-                {totalHours.toFixed(1)}h planned
-              </Badge>
+            {(totalTeamHours > 0 || totalActualHours > 0) && (
+              <div className="flex items-center gap-1">
+                {totalTeamHours > 0 && (
+                  <Badge variant="secondary" className="font-mono text-[10px]" title="Team estimate">
+                    {totalTeamHours.toFixed(1)}h team
+                  </Badge>
+                )}
+                {totalActualHours > 0 && (
+                  <Badge variant="outline" className="font-mono text-[10px]" title="Actual estimate">
+                    ~{totalActualHours.toFixed(1)}h actual
+                  </Badge>
+                )}
+              </div>
             )}
             <Button
               size="sm"
@@ -62,10 +82,16 @@ export function PlannedPanel({ planData, project, date, onPushToDone, onPushToDo
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => pushAllTo("done")}>
-                  Copy to "What I Did"
+                  Copy to "What I Did" (actual hrs)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => pushAllTo("done", true)}>
+                  Copy to "What I Did" (team hrs)
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => pushAllTo("doing")}>
-                  Copy to "What I'm Doing Next"
+                  Copy to "Doing Next" (actual hrs)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => pushAllTo("doing", true)}>
+                  Copy to "Doing Next" (team hrs)
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -80,8 +106,11 @@ export function PlannedPanel({ planData, project, date, onPushToDone, onPushToDo
           >
             <span className="text-primary/60">•</span>
             <span className="flex-1">{task.text}</span>
-            {task.hours > 0 && (
-              <span className="text-muted-foreground">{task.hours}h</span>
+            {task.teamHours > 0 && (
+              <span className="text-muted-foreground" title="Team estimate">{task.teamHours}h</span>
+            )}
+            {task.actualHours > 0 && (
+              <span className="text-primary/60" title="Actual estimate">~{task.actualHours}h</span>
             )}
             {task.startDate !== task.endDate && (
               <Calendar className="w-3 h-3 text-primary/40" />

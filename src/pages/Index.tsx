@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useEffect, useRef } from "react";
 import { useScrumData } from "@/hooks/use-scrum-data";
 import { usePlanData } from "@/hooks/use-plan-data";
 import { ProjectTabs } from "@/components/ProjectTabs";
@@ -16,6 +16,10 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ClipboardList } from "lucide-react";
 import { getYesterdayDate } from "@/lib/types";
 import { parseTasks } from "@/lib/task-parser";
+import { checkAndSendStandups, StandupDataProvider } from "@/lib/standup-scheduler";
+import { isTelegramConfigured } from "@/lib/telegram-service";
+import { toast } from "sonner";
+import { stripActualHours } from "@/lib/text-sanitizer";
 
 const Index = () => {
   const {
@@ -33,6 +37,7 @@ const Index = () => {
     renameProject,
     getEntriesForProject,
     triggerSync,
+    updateDuplicateVersions,
   } = useScrumData();
 
   const { planData, savePlanTask, removePlanTask, updatePlanTask } = usePlanData();
@@ -70,6 +75,45 @@ const Index = () => {
     }));
   }, [data.projects, yesterdayDate, selectedDate, getEntry]);
 
+  // Build standup text for telegram scheduler
+  const buildStandupText = useCallback((project: string): string => {
+    const yd = getYesterdayDate(selectedDate);
+    const y = getEntry(project, yd);
+    const t = getEntry(project, selectedDate);
+    const clean = (text: string) => stripActualHours(text).replace(/•/g, "·").replace(/[<>]/g, "");
+    const parts = [
+      `<b>Yesterday:</b>\n${clean(y?.done || "No entry")}`,
+      `<b>Today:</b>\n${clean(t?.doing || t?.done || "No entry yet")}`,
+      `<b>Blockers:</b>\n${clean(t?.blockers || y?.blockers || "None 🎉")}`,
+    ];
+    return `📋 <b>${project}</b>\n\n${parts.join("\n\n")}`;
+  }, [selectedDate, getEntry]);
+
+  // Standup scheduler: check every 30s
+  const buildStandupTextRef = useRef(buildStandupText);
+  buildStandupTextRef.current = buildStandupText;
+  const projectsRef = useRef(data.projects);
+  projectsRef.current = data.projects;
+
+  useEffect(() => {
+    if (!isTelegramConfigured()) return;
+    const provider: StandupDataProvider = {
+      getProjects: () => projectsRef.current,
+      getStandupText: (p) => buildStandupTextRef.current(p),
+    };
+    const interval = setInterval(async () => {
+      const sent = await checkAndSendStandups(provider);
+      if (sent.length > 0) {
+        toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
+      }
+    }, 30_000);
+    // Check immediately on mount
+    checkAndSendStandups(provider).then((sent) => {
+      if (sent.length > 0) toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
+    });
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm sticky top-0 z-10">
@@ -84,7 +128,7 @@ const Index = () => {
               <div className="hidden sm:flex items-center gap-1">
                 <DataIO data={data} onImport={importData} />
               </div>
-              <SettingsModal onCredentialsChange={handleCredentialsChange} />
+              <SettingsModal onCredentialsChange={handleCredentialsChange} projects={data.projects} />
               <DatePicker date={selectedDate} onChange={setSelectedDate} />
             </div>
           </div>
@@ -122,6 +166,7 @@ const Index = () => {
                     yesterday={yesterday}
                     planData={planData}
                     onSave={saveEntry}
+                    onUpdateDuplicateVersions={updateDuplicateVersions}
                   />
                 </div>
                 <div className="space-y-4">
@@ -151,7 +196,7 @@ const Index = () => {
             </TabsContent>
 
             <TabsContent value="timesheet" className="mt-4">
-              <TimesheetView entries={entries} project={activeProject} onSave={saveEntry} />
+              <TimesheetView entries={entries} project={activeProject} onSave={saveEntry} planData={planData} />
             </TabsContent>
           </Tabs>
         ) : (

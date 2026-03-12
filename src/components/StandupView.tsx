@@ -1,4 +1,5 @@
 import { Entry } from "@/lib/types";
+import { stripActualHours } from "@/lib/text-sanitizer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, ListTodo, AlertTriangle, Copy, Send, Loader2 } from "lucide-react";
@@ -18,14 +19,16 @@ function buildSections(yesterday: Entry | null, today: Entry | null) {
   return [
     {
       title: "Yesterday",
-      content: yesterday?.done || "No entry",
+      content: yesterday?.done ? stripActualHours(yesterday.done) : "No entry",
       icon: CheckCircle2,
       color: "text-success",
       bgColor: "bg-success/10",
     },
     {
       title: "Today",
-      content: (today?.doing || today?.done) ? (today?.doing || "See today's entry") : "No entry yet",
+      content: (today?.doing || today?.done)
+        ? stripActualHours(today?.doing || "See today's entry")
+        : "No entry yet",
       icon: ListTodo,
       color: "text-primary",
       bgColor: "bg-primary/10",
@@ -52,11 +55,26 @@ export function StandupView({ project, yesterday, today, allProjectsStandup }: S
   const [sending, setSending] = useState(false);
   const sections = buildSections(yesterday, today);
 
-  const copyToClipboard = () => {
-    const text = sections
-      .map((s) => `**${s.title}:**\n${s.content}`)
+  const copyToClipboard = async () => {
+    const plain = sections
+      .map((s) => `${s.title}:\n${s.content}`)
       .join("\n\n");
-    navigator.clipboard.writeText(text);
+    const html = sections
+      .map((s) => `<b>${s.title}:</b><br>${s.content.replace(/\n/g, "<br>")}`)
+      .join("<br><br>");
+
+    try {
+      // Try writing rich text (HTML) + plain text fallback
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob([plain], { type: "text/plain" }),
+        }),
+      ]);
+    } catch {
+      // Fallback: plain text only
+      await navigator.clipboard.writeText(plain);
+    }
     toast.success("Copied to clipboard!");
   };
 

@@ -11,6 +11,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   CalendarDays,
   ChevronLeft,
@@ -22,6 +23,8 @@ import {
   GripVertical,
   Calendar,
   X,
+  CheckSquare,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -42,10 +45,20 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
     return (localStorage.getItem(VIEW_MODE_KEY) as ViewMode) || "week";
   });
   const [currentWeekDate, setCurrentWeekDate] = useState(getToday());
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkTeamHours, setBulkTeamHours] = useState("");
+  const [bulkActualHours, setBulkActualHours] = useState("");
 
   useEffect(() => {
     localStorage.setItem(VIEW_MODE_KEY, viewMode);
   }, [viewMode]);
+
+  // Clear selection when switching projects or weeks
+  useEffect(() => {
+    setSelectedTaskIds(new Set());
+    setBulkMode(false);
+  }, [project, currentWeekDate]);
 
   const weekDays = useMemo(() => getWeekDays(currentWeekDate), [currentWeekDate]);
   const weekStart = weekDays[0];
@@ -63,7 +76,7 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
   };
 
   const formatDayHeader = (date: string) => {
-    const d = new Date(date);
+    const d = new Date(date + "T00:00:00");
     return {
       weekday: d.toLocaleDateString("en", { weekday: "short" }),
       dayMonth: d.toLocaleDateString("en", { month: "short", day: "numeric" }),
@@ -78,6 +91,57 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
     [weekTasks]
   );
 
+  const toggleTaskSelection = useCallback((taskId: string) => {
+    setSelectedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) next.delete(taskId);
+      else next.add(taskId);
+      return next;
+    });
+  }, []);
+
+  const selectAllWeekTasks = useCallback(() => {
+    setSelectedTaskIds(new Set(weekTasks.map((t) => t.id)));
+  }, [weekTasks]);
+
+  const clearSelection = useCallback(() => {
+    setSelectedTaskIds(new Set());
+  }, []);
+
+  const handleBulkDelete = () => {
+    const count = selectedTaskIds.size;
+    if (count === 0) return;
+    selectedTaskIds.forEach((id) => onRemoveTask(id));
+    setSelectedTaskIds(new Set());
+    toast.success(`Deleted ${count} task${count > 1 ? "s" : ""}`);
+  };
+
+  const handleBulkUpdateHours = () => {
+    const updates: Partial<PlanTask> = {};
+    if (bulkTeamHours !== "") updates.teamHours = parseFloat(bulkTeamHours) || 0;
+    if (bulkActualHours !== "") updates.actualHours = parseFloat(bulkActualHours) || 0;
+    if (Object.keys(updates).length === 0) return;
+    selectedTaskIds.forEach((id) => onUpdateTask(id, updates));
+    toast.success(`Updated hours on ${selectedTaskIds.size} task${selectedTaskIds.size > 1 ? "s" : ""}`);
+    setBulkTeamHours("");
+    setBulkActualHours("");
+  };
+
+  const viewProps: ViewProps = {
+    weekDays,
+    tasksForDay,
+    weekTasks,
+    project,
+    formatDayHeader,
+    isToday,
+    onSaveTask,
+    onRemoveTask,
+    onUpdateTask,
+    bulkMode,
+    selectedTaskIds,
+    onToggleTask: toggleTaskSelection,
+  };
+
   return (
     <div className="space-y-4">
       {/* Header with controls */}
@@ -89,6 +153,19 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
               Planning · {project}
             </CardTitle>
             <div className="flex items-center gap-2">
+              {/* Bulk mode toggle */}
+              <Button
+                variant={bulkMode ? "default" : "outline"}
+                size="sm"
+                className="h-8 text-xs gap-1.5"
+                onClick={() => {
+                  setBulkMode(!bulkMode);
+                  if (bulkMode) clearSelection();
+                }}
+              >
+                <CheckSquare className="w-3.5 h-3.5" />
+                {bulkMode ? "Done selecting" : "Select"}
+              </Button>
               {/* View mode toggle */}
               <div className="flex items-center rounded-md border border-border/50 overflow-hidden">
                 <button
@@ -143,30 +220,84 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
         </CardHeader>
       </Card>
 
+      {/* Bulk actions toolbar */}
+      {bulkMode && selectedTaskIds.size > 0 && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Badge variant="secondary" className="font-mono text-xs">
+                {selectedTaskIds.size} selected
+              </Badge>
+              <div className="flex items-center gap-1.5">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={selectAllWeekTasks}
+                >
+                  Select all ({weekTasks.length})
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs"
+                  onClick={clearSelection}
+                >
+                  Clear
+                </Button>
+              </div>
+              <div className="h-5 w-px bg-border" />
+              {/* Bulk hours update */}
+              <div className="flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-muted-foreground" />
+                <Input
+                  type="number"
+                  step="0.25"
+                  min="0.25"
+                  placeholder="Team hrs"
+                  value={bulkTeamHours}
+                  onChange={(e) => setBulkTeamHours(e.target.value)}
+                  className="h-7 text-xs w-20"
+                />
+                <Input
+                  type="number"
+                  step="0.25"
+                  min="0.25"
+                  placeholder="Actual hrs"
+                  value={bulkActualHours}
+                  onChange={(e) => setBulkActualHours(e.target.value)}
+                  className="h-7 text-xs w-20"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  className="h-7 text-xs"
+                  onClick={handleBulkUpdateHours}
+                  disabled={bulkTeamHours === "" && bulkActualHours === ""}
+                >
+                  Set hours
+                </Button>
+              </div>
+              <div className="h-5 w-px bg-border" />
+              {/* Bulk delete */}
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 text-xs gap-1"
+                onClick={handleBulkDelete}
+              >
+                <Trash2 className="w-3 h-3" />
+                Delete ({selectedTaskIds.size})
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {viewMode === "week" ? (
-        <WeekGridView
-          weekDays={weekDays}
-          tasksForDay={tasksForDay}
-          weekTasks={weekTasks}
-          project={project}
-          formatDayHeader={formatDayHeader}
-          isToday={isToday}
-          onSaveTask={onSaveTask}
-          onRemoveTask={onRemoveTask}
-          onUpdateTask={onUpdateTask}
-        />
+        <WeekGridView {...viewProps} />
       ) : (
-        <DayListView
-          weekDays={weekDays}
-          tasksForDay={tasksForDay}
-          weekTasks={weekTasks}
-          project={project}
-          formatDayHeader={formatDayHeader}
-          isToday={isToday}
-          onSaveTask={onSaveTask}
-          onRemoveTask={onRemoveTask}
-          onUpdateTask={onUpdateTask}
-        />
+        <DayListView {...viewProps} />
       )}
     </div>
   );
@@ -179,83 +310,167 @@ interface TaskItemProps {
   isMultiDay: boolean;
   onUpdate: (taskId: string, updates: Partial<PlanTask>) => void;
   onRemove: (taskId: string) => void;
+  bulkMode?: boolean;
+  isSelected?: boolean;
+  onToggle?: (taskId: string) => void;
 }
 
-function TaskItem({ task, isMultiDay, onUpdate, onRemove }: TaskItemProps) {
+function TaskItem({ task, isMultiDay, onUpdate, onRemove, bulkMode, isSelected, onToggle }: TaskItemProps) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState(task.text);
-  const [hours, setHours] = useState(String(task.hours || ""));
+  const [teamHours, setTeamHours] = useState(String(task.teamHours || ""));
+  const [actualHours, setActualHours] = useState(String(task.actualHours || ""));
   const [endDate, setEndDate] = useState(task.endDate);
+  const [focusField, setFocusField] = useState<"name" | "hours">("name");
+  const nameRef = useRef<HTMLInputElement>(null);
+  const hoursRef = useRef<HTMLInputElement>(null);
 
-  // Reset form when popover opens
   useEffect(() => {
     if (open) {
       setText(task.text);
-      setHours(String(task.hours || ""));
+      setTeamHours(String(task.teamHours || ""));
+      setActualHours(String(task.actualHours || ""));
       setEndDate(task.endDate);
+      setTimeout(() => {
+        if (focusField === "hours") {
+          hoursRef.current?.focus();
+          hoursRef.current?.select();
+        } else {
+          nameRef.current?.focus();
+          nameRef.current?.select();
+        }
+      }, 50);
     }
   }, [open, task]);
 
   const save = () => {
     onUpdate(task.id, {
       text: text.trim() || task.text,
-      hours: parseFloat(hours) || 0,
+      teamHours: parseFloat(teamHours) || 0,
+      actualHours: parseFloat(actualHours) || 0,
       endDate,
     });
     setOpen(false);
   };
+
+  const openWith = (field: "name" | "hours") => {
+    if (bulkMode) {
+      onToggle?.(task.id);
+      return;
+    }
+    setFocusField(field);
+    setOpen(true);
+  };
+
+  const displayHours = task.teamHours > 0 || task.actualHours > 0;
+  const hoursLabel = task.teamHours > 0 && task.actualHours > 0
+    ? `${task.teamHours}/${task.actualHours}h`
+    : task.teamHours > 0
+    ? `${task.teamHours}h`
+    : task.actualHours > 0
+    ? `~${task.actualHours}h`
+    : "";
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <div
         className={cn(
           "group flex items-center gap-1.5 px-2 py-1 rounded text-xs hover:bg-muted/40 transition-colors",
-          isMultiDay && "border-l-2 border-primary/60"
+          isMultiDay && "border-l-2 border-primary/60",
+          bulkMode && isSelected && "bg-primary/10 ring-1 ring-primary/30"
         )}
+        onClick={bulkMode ? () => onToggle?.(task.id) : undefined}
       >
-        <GripVertical className="w-3 h-3 text-muted-foreground/40 flex-shrink-0" />
+        {bulkMode ? (
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={() => onToggle?.(task.id)}
+            className="flex-shrink-0"
+          />
+        ) : (
+          <GripVertical className="w-3 h-3 text-muted-foreground/40 flex-shrink-0" />
+        )}
         <PopoverTrigger asChild>
-          <button className="flex-1 text-left truncate font-mono cursor-pointer">
+          <button
+            className="flex-1 text-left truncate font-mono cursor-pointer"
+            onClick={(e) => {
+              if (bulkMode) { e.preventDefault(); return; }
+              openWith("name");
+            }}
+          >
             {task.text}
           </button>
         </PopoverTrigger>
-        {task.hours > 0 && (
-          <Badge variant="secondary" className="text-[9px] px-1 py-0 font-mono flex-shrink-0">
-            {task.hours}h
-          </Badge>
+        {displayHours && (
+          <PopoverTrigger asChild>
+            <button onClick={(e) => {
+              if (bulkMode) { e.preventDefault(); return; }
+              openWith("hours");
+            }}>
+              <Badge variant="secondary" className="text-[9px] px-1 py-0 font-mono flex-shrink-0 cursor-pointer hover:bg-secondary/80">
+                {hoursLabel}
+              </Badge>
+            </button>
+          </PopoverTrigger>
         )}
         {isMultiDay && (
           <Calendar className="w-3 h-3 text-primary/60 flex-shrink-0" />
         )}
-        <button
-          className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove(task.id);
-          }}
-        >
-          <Trash2 className="w-3 h-3 text-destructive/70" />
-        </button>
+        {!bulkMode && (
+          <button
+            className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(task.id);
+            }}
+          >
+            <Trash2 className="w-3 h-3 text-destructive/70" />
+          </button>
+        )}
       </div>
 
-      <PopoverContent className="w-56 p-2 space-y-1.5" side="right" align="start">
+      <PopoverContent className="w-64 p-2 space-y-1.5" align="start">
         <Input
+          ref={nameRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && save()}
           className="h-7 text-xs"
           placeholder="Task name"
-          autoFocus
         />
+        <div className="space-y-1">
+          <div className="flex gap-1.5 items-center">
+            <Label className="text-[9px] text-muted-foreground w-12 shrink-0">Team</Label>
+            <Input
+              ref={hoursRef}
+              type="number"
+              value={teamHours}
+              onChange={(e) => setTeamHours(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && save()}
+              placeholder="hrs"
+              className="h-7 text-xs w-16"
+              step="0.25"
+              min="0.25"
+              title="Hours communicated to team"
+            />
+            <Label className="text-[9px] text-muted-foreground w-12 shrink-0">Actual</Label>
+            <Input
+              type="number"
+              value={actualHours}
+              onChange={(e) => setActualHours(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && save()}
+              placeholder="hrs"
+              className="h-7 text-xs w-16"
+              step="0.25"
+              min="0.25"
+              title="Your real estimate"
+            />
+          </div>
+          <p className="text-[9px] text-muted-foreground">
+            Team = stakeholder estimate · Actual = your real estimate
+          </p>
+        </div>
         <div className="flex gap-1.5">
-          <Input
-            type="number"
-            value={hours}
-            onChange={(e) => setHours(e.target.value)}
-            placeholder="hrs"
-            className="h-7 text-xs w-16"
-            step="0.5"
-          />
           <Input
             type="date"
             value={endDate}
@@ -304,7 +519,7 @@ function AddTaskInput({ date, project, onSave }: AddTaskProps) {
   const handleAdd = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
-    onSave(createPlanTask(trimmed, date, date, 0, project));
+    onSave(createPlanTask(trimmed, date, date, 0, project, 0));
     setText("");
   };
 
@@ -336,6 +551,9 @@ interface ViewProps {
   onSaveTask: (task: PlanTask) => void;
   onRemoveTask: (taskId: string) => void;
   onUpdateTask: (taskId: string, updates: Partial<PlanTask>) => void;
+  bulkMode: boolean;
+  selectedTaskIds: Set<string>;
+  onToggleTask: (taskId: string) => void;
 }
 
 function WeekGridView({
@@ -347,9 +565,13 @@ function WeekGridView({
   onSaveTask,
   onRemoveTask,
   onUpdateTask,
+  bulkMode,
+  selectedTaskIds,
+  onToggleTask,
 }: ViewProps) {
   const [selectedDays, setSelectedDays] = useState<Set<string>>(new Set());
   const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
   const [multiTaskText, setMultiTaskText] = useState("");
   const [multiTaskHours, setMultiTaskHours] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -357,25 +579,27 @@ function WeekGridView({
   const handleMouseDown = (date: string, e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("[data-task-item], input, button, [data-radix-popper-content-wrapper]")) return;
     e.preventDefault();
+    isDraggingRef.current = true;
     setIsDragging(true);
     setSelectedDays(new Set([date]));
   };
 
   const handleMouseEnter = (date: string) => {
-    if (!isDragging) return;
+    if (!isDraggingRef.current) return;
     setSelectedDays((prev) => new Set([...prev, date]));
   };
 
   useEffect(() => {
     const up = () => {
-      if (isDragging) {
+      if (isDraggingRef.current) {
+        isDraggingRef.current = false;
         setIsDragging(false);
         setTimeout(() => inputRef.current?.focus(), 50);
       }
     };
     window.addEventListener("mouseup", up);
     return () => window.removeEventListener("mouseup", up);
-  }, [isDragging]);
+  }, []);
 
   const handleAddMultiTask = () => {
     const trimmed = multiTaskText.trim();
@@ -395,10 +619,10 @@ function WeekGridView({
     });
 
     if (allContiguous && sorted.length > 1) {
-      onSaveTask(createPlanTask(trimmed, startDate, endDate, hours, project));
+      onSaveTask(createPlanTask(trimmed, startDate, endDate, hours, project, 0));
     } else {
       for (const date of sorted) {
-        onSaveTask(createPlanTask(trimmed, date, date, hours, project));
+        onSaveTask(createPlanTask(trimmed, date, date, hours, project, 0));
       }
     }
 
@@ -416,51 +640,56 @@ function WeekGridView({
 
   return (
     <div className="space-y-2">
-      {/* Multi-select toolbar */}
-      {selectedDays.size > 0 && (
-        <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/20 animate-in fade-in slide-in-from-top-1">
-          <Badge variant="secondary" className="text-[10px] font-mono flex-shrink-0">
-            {selectedDays.size} day{selectedDays.size > 1 ? "s" : ""}
-          </Badge>
-          <Input
-            ref={inputRef}
-            value={multiTaskText}
-            onChange={(e) => setMultiTaskText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleAddMultiTask();
-              if (e.key === "Escape") clearSelection();
-            }}
-            placeholder="Task name..."
-            className="h-7 text-xs flex-1"
-          />
-          <Input
-            value={multiTaskHours}
-            onChange={(e) => setMultiTaskHours(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleAddMultiTask();
-              if (e.key === "Escape") clearSelection();
-            }}
-            placeholder="hrs"
-            type="number"
-            step="0.5"
-            className="h-7 text-xs w-16"
-          />
-          <Button size="sm" className="h-7 text-xs gap-1" onClick={handleAddMultiTask}>
-            <Plus className="w-3 h-3" /> Add
-          </Button>
-          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={clearSelection} title="Clear selection">
-            <X className="w-3.5 h-3.5" />
-          </Button>
-        </div>
-      )}
+      {/* Multi-select toolbar — fixed height wrapper to prevent layout shift */}
+      <div className="min-h-[40px]">
+        {selectedDays.size > 0 ? (
+          <div className="flex items-center gap-2 p-2 rounded-lg bg-primary/5 border border-primary/20 animate-in fade-in">
+            <Badge variant="secondary" className="text-[10px] font-mono flex-shrink-0">
+              {selectedDays.size} day{selectedDays.size > 1 ? "s" : ""}
+            </Badge>
+            <Input
+              ref={inputRef}
+              value={multiTaskText}
+              onChange={(e) => setMultiTaskText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAddMultiTask();
+                if (e.key === "Escape") clearSelection();
+              }}
+              placeholder="Task name..."
+              className="h-7 text-xs flex-1"
+            />
+            <Input
+              value={multiTaskHours}
+              onChange={(e) => setMultiTaskHours(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleAddMultiTask();
+                if (e.key === "Escape") clearSelection();
+              }}
+              placeholder={selectedDays.size > 1 ? "total hrs" : "hrs"}
+              title={selectedDays.size > 1 ? "Total hours across all selected days" : "Hours"}
+              type="number"
+              step="0.25"
+              min="0.25"
+              className="h-7 text-xs w-16"
+            />
+            <Button size="sm" className="h-7 text-xs gap-1" onClick={handleAddMultiTask}>
+              <Plus className="w-3 h-3" /> Add
+            </Button>
+            <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={clearSelection} title="Clear selection">
+              <X className="w-3.5 h-3.5" />
+            </Button>
+          </div>
+        ) : (
+          <p className="text-[10px] text-muted-foreground py-2">
+            Drag across days to select multiple, then add a task to all at once.
+          </p>
+        )}
+      </div>
 
-      {selectedDays.size === 0 && (
-        <p className="text-[10px] text-muted-foreground">
-          Drag across days to select multiple, then add a task to all at once.
-        </p>
-      )}
-
-      <div className="grid grid-cols-5 gap-2 select-none">
+      <div
+        className="grid gap-2 select-none"
+        style={{ gridTemplateColumns: `repeat(${weekDays.length}, minmax(0, 1fr))` }}
+      >
         {weekDays.map((date) => {
           const { weekday, dayMonth } = formatDayHeader(date);
           const tasks = tasksForDay(date);
@@ -509,6 +738,9 @@ function WeekGridView({
                       isMultiDay={task.startDate !== task.endDate}
                       onUpdate={onUpdateTask}
                       onRemove={onRemoveTask}
+                      bulkMode={bulkMode}
+                      isSelected={selectedTaskIds.has(task.id)}
+                      onToggle={onToggleTask}
                     />
                   </div>
                 ))}
@@ -533,6 +765,9 @@ function DayListView({
   onSaveTask,
   onRemoveTask,
   onUpdateTask,
+  bulkMode,
+  selectedTaskIds,
+  onToggleTask,
 }: ViewProps) {
   return (
     <div className="space-y-3">
@@ -572,6 +807,9 @@ function DayListView({
                   isMultiDay={task.startDate !== task.endDate}
                   onUpdate={onUpdateTask}
                   onRemove={onRemoveTask}
+                  bulkMode={bulkMode}
+                  isSelected={selectedTaskIds.has(task.id)}
+                  onToggle={onToggleTask}
                 />
               ))}
               <AddTaskInput date={date} project={project} onSave={onSaveTask} />

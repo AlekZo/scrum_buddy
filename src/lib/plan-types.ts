@@ -3,8 +3,13 @@ export interface PlanTask {
   text: string;
   startDate: string; // YYYY-MM-DD
   endDate: string;   // YYYY-MM-DD, same as startDate for single-day
-  hours: number;
+  /** Hours communicated to team/stakeholders (padded estimate) */
+  teamHours: number;
+  /** Actual expected or real hours */
+  actualHours: number;
   project: string;
+  /** @deprecated Use teamHours instead. Kept for backward compat during migration. */
+  hours?: number;
 }
 
 export interface PlanData {
@@ -15,16 +20,36 @@ export const createPlanTask = (
   text: string,
   startDate: string,
   endDate: string,
-  hours: number,
-  project: string
+  teamHours: number,
+  project: string,
+  actualHours: number = 0
 ): PlanTask => ({
   id: crypto.randomUUID(),
   text,
   startDate,
   endDate,
-  hours,
+  teamHours,
+  actualHours,
   project,
 });
+
+/**
+ * Migrate legacy tasks that only have `hours` to the new dual-hours model
+ */
+export function migratePlanTask(task: PlanTask): PlanTask {
+  if (task.teamHours === undefined && task.actualHours === undefined && (task as any).hours !== undefined) {
+    return {
+      ...task,
+      teamHours: (task as any).hours || 0,
+      actualHours: 0,
+    };
+  }
+  return {
+    ...task,
+    teamHours: task.teamHours ?? (task as any).hours ?? 0,
+    actualHours: task.actualHours ?? 0,
+  };
+}
 
 /**
  * Get all plan tasks that cover a given date for a project
@@ -34,9 +59,11 @@ export function getPlannedTasksForDate(
   project: string,
   date: string
 ): PlanTask[] {
-  return Object.values(planData.tasks).filter(
-    (t) => t.project === project && t.startDate <= date && t.endDate >= date
-  );
+  return Object.values(planData.tasks)
+    .map(migratePlanTask)
+    .filter(
+      (t) => t.project === project && t.startDate <= date && t.endDate >= date
+    );
 }
 
 /**
@@ -48,9 +75,11 @@ export function getPlannedTasksForRange(
   from: string,
   to: string
 ): PlanTask[] {
-  return Object.values(planData.tasks).filter(
-    (t) => t.project === project && t.endDate >= from && t.startDate <= to
-  );
+  return Object.values(planData.tasks)
+    .map(migratePlanTask)
+    .filter(
+      (t) => t.project === project && t.endDate >= from && t.startDate <= to
+    );
 }
 
 /**

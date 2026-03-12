@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,7 +13,13 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Unplug, Calendar, Plus, Trash2, UserCircle, Send } from "lucide-react";
+import { Settings, Unplug, Calendar, Plus, Trash2, UserCircle, Send, Sparkles, AlertTriangle, Clock } from "lucide-react";
+import {
+  getAISettings,
+  saveAISettings,
+  clearAISettings,
+  getAIDefaults,
+} from "@/lib/ai-service";
 import {
   getTelegramSettings,
   saveTelegramSettings,
@@ -38,12 +44,14 @@ import {
   GCalFilters,
 } from "@/lib/gcal-service";
 import { toast } from "sonner";
+import { getStandupSchedule, saveStandupSchedule, StandupSchedule } from "@/lib/standup-scheduler";
 
 interface SettingsModalProps {
   onCredentialsChange: () => void;
+  projects?: string[];
 }
 
-export function SettingsModal({ onCredentialsChange }: SettingsModalProps) {
+export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsModalProps) {
   const [open, setOpen] = useState(false);
 
   // Supabase state
@@ -65,6 +73,13 @@ export function SettingsModal({ onCredentialsChange }: SettingsModalProps) {
   // Telegram state
   const [tgBotToken, setTgBotToken] = useState("");
   const [tgChatId, setTgChatId] = useState("");
+  const [standupTimes, setStandupTimes] = useState<Record<string, string>>({});
+
+  // AI state
+  const aiDefaults = getAIDefaults();
+  const [aiBaseUrl, setAiBaseUrl] = useState(aiDefaults.baseUrl);
+  const [aiApiKey, setAiApiKey] = useState("");
+  const [aiModel, setAiModel] = useState(aiDefaults.model);
 
   const handleOpen = () => {
     const creds = getCredentials();
@@ -80,6 +95,12 @@ export function SettingsModal({ onCredentialsChange }: SettingsModalProps) {
     const tg = getTelegramSettings();
     setTgBotToken(tg?.botToken || "");
     setTgChatId(tg?.chatId || "");
+    setStandupTimes(getStandupSchedule().times);
+
+    const ai = getAISettings();
+    setAiBaseUrl(ai?.baseUrl || aiDefaults.baseUrl);
+    setAiApiKey(ai?.apiKey || "");
+    setAiModel(ai?.model || aiDefaults.model);
 
     setOpen(true);
   };
@@ -210,6 +231,12 @@ export function SettingsModal({ onCredentialsChange }: SettingsModalProps) {
               </TabsTrigger>
               <TabsTrigger value="telegram" className="flex-1 gap-1 text-xs">
                 <Send className="w-3.5 h-3.5" /> Telegram
+              </TabsTrigger>
+              <TabsTrigger value="ai" className="flex-1 gap-1 text-xs">
+                <Sparkles className="w-3.5 h-3.5" /> AI
+              </TabsTrigger>
+              <TabsTrigger value="danger" className="flex-1 gap-1 text-xs text-destructive">
+                <AlertTriangle className="w-3.5 h-3.5" /> Data
               </TabsTrigger>
             </TabsList>
 
@@ -420,6 +447,53 @@ export function SettingsModal({ onCredentialsChange }: SettingsModalProps) {
                   Group/channel ID (starts with -100) or your personal chat ID. Use <a href="https://t.me/userinfobot" target="_blank" rel="noreferrer" className="underline text-primary">@userinfobot</a> to find yours.
                 </p>
               </div>
+
+              {/* Standup schedule */}
+              <Separator />
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5" /> Standup Schedule
+                </Label>
+                <p className="text-[10px] text-muted-foreground">
+                  Set a standup time per project. The app will auto-send to Telegram 5 minutes before (tab must be open).
+                </p>
+                {projects.length === 0 ? (
+                  <p className="text-xs text-muted-foreground italic">No projects yet.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {projects.map((proj) => (
+                      <div key={proj} className="flex items-center gap-2">
+                        <span className="text-xs font-mono truncate flex-1 max-w-[160px]">{proj}</span>
+                        <Input
+                          type="time"
+                          value={standupTimes[proj] || ""}
+                          onChange={(e) =>
+                            setStandupTimes((prev) => ({ ...prev, [proj]: e.target.value }))
+                          }
+                          className="h-7 text-xs w-28"
+                        />
+                        {standupTimes[proj] && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 w-6 p-0"
+                            onClick={() =>
+                              setStandupTimes((prev) => {
+                                const next = { ...prev };
+                                delete next[proj];
+                                return next;
+                              })
+                            }
+                          >
+                            <Trash2 className="w-3 h-3 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="flex gap-2">
                 {!!getTelegramSettings() && (
                   <Button
@@ -445,11 +519,148 @@ export function SettingsModal({ onCredentialsChange }: SettingsModalProps) {
                       return;
                     }
                     saveTelegramSettings({ botToken: tgBotToken.trim(), chatId: tgChatId.trim() });
+                    saveStandupSchedule({ times: standupTimes });
                     toast.success("Telegram settings saved.");
                   }}
                 >
                   Save Settings
                 </Button>
+              </div>
+            </TabsContent>
+
+            {/* ── AI Tab ── */}
+            <TabsContent value="ai" className="space-y-4 mt-4">
+              <div className="space-y-1.5">
+                <Label className="text-xs">Base URL</Label>
+                <Input
+                  value={aiBaseUrl}
+                  onChange={(e) => setAiBaseUrl(e.target.value)}
+                  placeholder="https://openrouter.ai/api/v1"
+                  className="h-9 font-mono text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Any OpenAI-compatible API endpoint (OpenRouter, Together, local LLM, etc.)
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">API Key</Label>
+                <Input
+                  value={aiApiKey}
+                  onChange={(e) => setAiApiKey(e.target.value)}
+                  placeholder="sk-..."
+                  type="password"
+                  className="h-9 font-mono text-xs"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs">Model</Label>
+                <Input
+                  value={aiModel}
+                  onChange={(e) => setAiModel(e.target.value)}
+                  placeholder="google/gemini-2.5-flash"
+                  className="h-9 font-mono text-xs"
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Model identifier. For OpenRouter see <a href="https://openrouter.ai/models" target="_blank" rel="noreferrer" className="underline text-primary">available models</a>.
+                </p>
+              </div>
+              <div className="flex gap-2">
+                {!!getAISettings() && (
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      clearAISettings();
+                      const d = getAIDefaults();
+                      setAiBaseUrl(d.baseUrl);
+                      setAiApiKey("");
+                      setAiModel(d.model);
+                      toast.success("AI disconnected.");
+                    }}
+                    className="gap-1"
+                  >
+                    <Unplug className="w-3.5 h-3.5" /> Disconnect
+                  </Button>
+                )}
+                <div className="flex-1" />
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    if (!aiApiKey.trim()) {
+                      toast.error("API Key is required");
+                      return;
+                    }
+                    saveAISettings({
+                      baseUrl: aiBaseUrl.trim() || getAIDefaults().baseUrl,
+                      apiKey: aiApiKey.trim(),
+                      model: aiModel.trim() || getAIDefaults().model,
+                    });
+                    toast.success("AI settings saved.");
+                  }}
+                >
+                  Save Settings
+                </Button>
+              </div>
+            </TabsContent>
+
+            {/* ── Data / Danger Zone Tab ── */}
+            <TabsContent value="danger" className="space-y-4 mt-4">
+              <div className="rounded-md border border-destructive/50 p-4 space-y-3">
+                <h4 className="text-sm font-semibold text-destructive flex items-center gap-1.5">
+                  <AlertTriangle className="w-4 h-4" /> Danger Zone
+                </h4>
+                <p className="text-xs text-muted-foreground">
+                  All data is stored in your browser's <strong>localStorage</strong>. If you've configured a Supabase sync, a copy also lives in your remote database. Deleting here removes <em>local</em> data only.
+                </p>
+                <Separator />
+                <div className="space-y-2">
+                  <p className="text-xs font-medium">Delete all local data</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    This will remove all projects, entries, planning data, and settings from this browser. This action cannot be undone.
+                  </p>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    className="gap-1"
+                    onClick={() => {
+                      if (!window.confirm("Are you sure? This will permanently delete ALL local data including entries, projects, and settings.")) return;
+                      localStorage.clear();
+                      toast.success("All local data deleted. Reloading…");
+                      setTimeout(() => window.location.reload(), 500);
+                    }}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete All Local Data
+                  </Button>
+                </div>
+                <Separator />
+                <div className="space-y-2">
+                  <p className="text-xs font-medium">Delete entries only</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    Keeps your projects and settings but removes all log entries.
+                  </p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1 border-destructive/50 text-destructive hover:bg-destructive/10"
+                    onClick={() => {
+                      if (!window.confirm("Delete all entries? Projects and settings will be kept.")) return;
+                      try {
+                        const raw = localStorage.getItem("daily-scrum-logger");
+                        if (raw) {
+                          const d = JSON.parse(raw);
+                          d.entries = {};
+                          localStorage.setItem("daily-scrum-logger", JSON.stringify(d));
+                        }
+                        toast.success("Entries deleted. Reloading…");
+                        setTimeout(() => window.location.reload(), 500);
+                      } catch {
+                        toast.error("Failed to clear entries");
+                      }
+                    }}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete Entries Only
+                  </Button>
+                </div>
               </div>
             </TabsContent>
           </Tabs>
@@ -478,12 +689,13 @@ function FilterList({
   onRemove: (i: number) => void;
   placeholder: string;
 }) {
+  const safeItems = items || [];
   return (
     <div className="space-y-1">
       <Label className="text-[10px]">{label}</Label>
-      {items.length > 0 && (
+      {safeItems.length > 0 && (
         <div className="flex flex-wrap gap-1">
-          {items.map((item, i) => (
+          {safeItems.map((item, i) => (
             <Badge key={i} variant="secondary" className="text-[10px] gap-0.5 pr-0.5">
               {item}
               <button onClick={() => onRemove(i)} className="ml-0.5 hover:text-destructive">

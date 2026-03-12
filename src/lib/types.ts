@@ -5,11 +5,16 @@ export interface Entry {
   doing: string;
   blockers: string;
   hours: number; // auto-computed from parsed tasks
+  version?: string; // user-defined version label (e.g. "v2", "sprint-3")
 }
 
 export interface ParsedTask {
   text: string;
-  hours: number;
+  hours: number; // backward compat: equals actualHours when dual, otherwise the single value
+  /** Actual time spent (your real hours) */
+  actualHours: number;
+  /** Time communicated to team/stakeholders (padded estimate) */
+  teamHours: number;
   source: "done" | "doing";
   tags: string[];
 }
