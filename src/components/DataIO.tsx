@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, Upload, FileText, FileJson, FileSpreadsheet } from "lucide-react";
 import { ScrumData, Entry, formatDate } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -259,7 +260,59 @@ export function DataIO({ data, onImport }: DataIOProps) {
     if (csvFileRef.current) csvFileRef.current.value = "";
   };
 
+  const [showImport, setShowImport] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+    processImportFile(file);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processImportFile(file);
+    e.target.value = "";
+  };
+
+  const processImportFile = (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase();
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const content = ev.target?.result as string;
+      try {
+        if (ext === "json") {
+          const parsed = JSON.parse(content) as ScrumData;
+          if (!parsed.projects || !parsed.entries) {
+            toast.error("Invalid JSON — needs 'projects' and 'entries' keys");
+            return;
+          }
+          onImport(parsed);
+          toast.success(`Imported ${parsed.projects.length} project(s) from JSON`);
+        } else if (ext === "csv") {
+          const result = parseCSVImport(content);
+          if (!result || result.projects.length === 0) {
+            toast.error("No valid data. CSV needs at least a 'date' column.");
+            return;
+          }
+          onImport(result);
+          toast.success(`Imported ${result.projects.length} project(s) from CSV`);
+        } else {
+          toast.error("Unsupported file type — use .json or .csv");
+        }
+      } catch {
+        toast.error("Failed to parse file");
+      }
+    };
+    reader.readAsText(file);
+    setShowImport(false);
+  };
+
   const formatLabels = { md: "Markdown", json: "JSON", xlsx: "Excel" };
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   return (
     <>
@@ -284,27 +337,96 @@ export function DataIO({ data, onImport }: DataIOProps) {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="ghost" className="h-8 px-2 text-muted-foreground gap-1 text-xs">
-              <Upload className="w-3.5 h-3.5" />
-              Import
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => jsonFileRef.current?.click()}>
-              <FileJson className="w-4 h-4 mr-2" /> JSON (.json)
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => csvFileRef.current?.click()}>
-              <FileSpreadsheet className="w-4 h-4 mr-2" /> CSV (.csv)
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <input ref={jsonFileRef} type="file" accept=".json" onChange={handleJSONImport} className="hidden" />
-        <input ref={csvFileRef} type="file" accept=".csv" onChange={handleCSVImport} className="hidden" />
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-8 px-2 text-muted-foreground gap-1 text-xs"
+          onClick={() => setShowImport(true)}
+        >
+          <Upload className="w-3.5 h-3.5" />
+          Import
+        </Button>
       </div>
 
+      {/* ── IMPORT DIALOG ── */}
+      <Dialog open={showImport} onOpenChange={setShowImport}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="w-5 h-5 text-primary" />
+              Import Data
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Drop zone */}
+          <div
+            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+            onDragLeave={() => setIsDragging(false)}
+            onDrop={handleFileDrop}
+            onClick={() => importFileRef.current?.click()}
+            className={cn(
+              "border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-all",
+              isDragging
+                ? "border-primary bg-primary/5 scale-[1.01]"
+                : "border-border/50 hover:border-primary/40 hover:bg-muted/30"
+            )}
+          >
+            <Upload className={cn("w-8 h-8 mx-auto mb-3 transition-colors", isDragging ? "text-primary" : "text-muted-foreground/40")} />
+            <p className="text-sm font-medium text-foreground">
+              {isDragging ? "Drop your file here" : "Drag & drop a file, or click to browse"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Supports <span className="font-semibold text-foreground">.json</span> and{" "}
+              <span className="font-semibold text-foreground">.csv</span> files
+            </p>
+          </div>
+          <input
+            ref={importFileRef}
+            type="file"
+            accept=".json,.csv"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
+
+          {/* Format guides */}
+          <div className="space-y-3 text-xs text-muted-foreground">
+            <div className="rounded-md bg-muted/30 p-3 space-y-2">
+              <p className="font-semibold text-foreground flex items-center gap-1.5">
+                <FileJson className="w-3.5 h-3.5 text-primary" />
+                JSON format
+              </p>
+              <p>
+                Export from this app using <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">Export → JSON</span>, then re-import it here. The file needs{" "}
+                <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">projects</span> and{" "}
+                <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">entries</span> keys.
+              </p>
+            </div>
+            <div className="rounded-md bg-muted/30 p-3 space-y-2">
+              <p className="font-semibold text-foreground flex items-center gap-1.5">
+                <FileSpreadsheet className="w-3.5 h-3.5 text-primary" />
+                CSV format
+              </p>
+              <p>
+                A spreadsheet with columns: <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">date</span> (required),{" "}
+                <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">done</span>,{" "}
+                <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">doing</span>,{" "}
+                <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">blockers</span>,{" "}
+                <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">hours</span>,{" "}
+                <span className="font-mono text-[10px] bg-muted px-1 py-0.5 rounded">project</span>.
+              </p>
+              <p className="text-[10px] text-muted-foreground/70">
+                Only <span className="font-semibold">date</span> is required. Missing columns are imported as empty.
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowImport(false)}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── EXPORT DIALOG ── */}
       <Dialog open={showExport} onOpenChange={setShowExport}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>

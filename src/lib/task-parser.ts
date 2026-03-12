@@ -58,7 +58,7 @@ export function parseTasks(text: string, source: "done" | "doing"): ParsedTask[]
 function extractDualHours(text: string): { actual: number; team: number } {
   // Dual format: actual/team  e.g. "1h/3h", "1.5h / 4h", "30m/2h", "1ч/3ч"
   const dualSlash = text.match(
-    /(\d*[.,]?\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)\s*\/\s*(\d*[.,]?\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)/i
+    /(\d+[.,]?\d*|\.\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)\s*\/\s*(\d+[.,]?\d*|\.\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)/i
   );
   if (dualSlash) {
     const actual = parseTimeValue(dualSlash[1], dualSlash[2]);
@@ -68,7 +68,7 @@ function extractDualHours(text: string): { actual: number; team: number } {
 
   // Dual format: actual (team)  e.g. "1h (3h)", "2ч (5ч)"
   const dualParen = text.match(
-    /(\d*[.,]?\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)\s*\(\s*(\d*[.,]?\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)\s*\)/i
+    /(\d+[.,]?\d*|\.\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)\s*\(\s*(\d+[.,]?\d*|\.\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)\s*\)/i
   );
   if (dualParen) {
     const actual = parseTimeValue(dualParen[1], dualParen[2]);
@@ -83,6 +83,7 @@ function extractDualHours(text: string): { actual: number; team: number } {
 
 function parseTimeValue(numStr: string, unit: string): number {
   const val = parseFloat(numStr.replace(",", "."));
+  if (isNaN(val)) return 0;
   const u = unit.toLowerCase();
   if (u.startsWith("m") || u === "м") return val / 60;
   return val;

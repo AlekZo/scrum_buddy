@@ -13,6 +13,7 @@ import { RecentEntries } from "@/components/RecentEntries";
 import { CalendarLogView } from "@/components/CalendarLogView";
 import { YesterdayPanel } from "@/components/YesterdayPanel";
 import { PlanningView } from "@/components/PlanningView";
+import { CommandPalette } from "@/components/CommandPalette";
 import { WeeklyRetro } from "@/components/WeeklyRetro";
 import { SettingsModal } from "@/components/SettingsModal";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -145,6 +146,15 @@ const Index = () => {
 
   const mainContent = (
     <>
+      {/* Global Command Palette (Cmd+K) */}
+      {hasProjects && (
+        <CommandPalette
+          projects={data.projects}
+          activeProject={activeProject}
+          onSaveTask={savePlanTask}
+          onSwitchProject={setActiveProject}
+        />
+      )}
       {/* Header */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm sticky top-0 z-10">
         <div className="px-3 sm:px-6 py-2 sm:py-3">

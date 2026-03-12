@@ -13,7 +13,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Unplug, Calendar, Plus, Trash2, UserCircle, Send, Sparkles, AlertTriangle, Clock } from "lucide-react";
+import { Settings, Unplug, Calendar, Plus, Trash2, UserCircle, Send, Sparkles, AlertTriangle, Clock, FileText, RotateCcw } from "lucide-react";
 import {
   getAISettings,
   saveAISettings,
@@ -45,6 +45,14 @@ import {
 } from "@/lib/gcal-service";
 import { toast } from "sonner";
 import { getStandupSchedule, saveStandupSchedule, StandupSchedule } from "@/lib/standup-scheduler";
+import { getCustomPrompts, saveCustomPrompts, resetCustomPrompts, getDefaultPrompts, CustomPrompts } from "@/lib/ai-prompts";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+import { Textarea } from "@/components/ui/textarea";
 
 interface SettingsModalProps {
   onCredentialsChange: () => void;
@@ -81,6 +89,8 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
   const [aiApiKey, setAiApiKey] = useState("");
   const [aiModel, setAiModel] = useState(aiDefaults.model);
 
+  // AI Prompts state
+  const [prompts, setPrompts] = useState<CustomPrompts>(getCustomPrompts());
   const handleOpen = () => {
     const creds = getCredentials();
     setUrl(creds?.url || "");
@@ -101,6 +111,7 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
     setAiBaseUrl(ai?.baseUrl || aiDefaults.baseUrl);
     setAiApiKey(ai?.apiKey || "");
     setAiModel(ai?.model || aiDefaults.model);
+    setPrompts(getCustomPrompts());
 
     setOpen(true);
   };
@@ -234,6 +245,9 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
               </TabsTrigger>
               <TabsTrigger value="ai" className="flex-1 gap-1 text-xs">
                 <Sparkles className="w-3.5 h-3.5" /> AI
+              </TabsTrigger>
+              <TabsTrigger value="prompts" className="flex-1 gap-1 text-xs">
+                <FileText className="w-3.5 h-3.5" /> Prompts
               </TabsTrigger>
               <TabsTrigger value="danger" className="flex-1 gap-1 text-xs text-destructive">
                 <AlertTriangle className="w-3.5 h-3.5" /> Data
@@ -623,7 +637,80 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
               </div>
             </TabsContent>
 
-            {/* ── Data / Danger Zone Tab ── */}
+            {/* ── AI Prompts Tab ── */}
+            <TabsContent value="prompts" className="space-y-4 mt-4">
+              <p className="text-[10px] text-muted-foreground">
+                Customize the AI system prompts used for each feature. This controls tone, style, and behavior per job/persona.
+              </p>
+              <Accordion type="multiple" className="w-full">
+                <AccordionItem value="standupPolish">
+                  <AccordionTrigger className="text-xs font-medium py-2">Standup Polish Prompt</AccordionTrigger>
+                  <AccordionContent>
+                    <Textarea
+                      value={prompts.standupPolish}
+                      onChange={(e) => setPrompts((p) => ({ ...p, standupPolish: e.target.value }))}
+                      className="text-xs font-mono min-h-[100px]"
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+                <AccordionItem value="blockerPolish">
+                  <AccordionTrigger className="text-xs font-medium py-2">Blocker Polish Prompt</AccordionTrigger>
+                  <AccordionContent>
+                    <Textarea
+                      value={prompts.blockerPolish}
+                      onChange={(e) => setPrompts((p) => ({ ...p, blockerPolish: e.target.value }))}
+                      className="text-xs font-mono min-h-[100px]"
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+                <AccordionItem value="taskExpander">
+                  <AccordionTrigger className="text-xs font-medium py-2">Task Expander Prompt</AccordionTrigger>
+                  <AccordionContent>
+                    <Textarea
+                      value={prompts.taskExpander}
+                      onChange={(e) => setPrompts((p) => ({ ...p, taskExpander: e.target.value }))}
+                      className="text-xs font-mono min-h-[100px]"
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+                <AccordionItem value="weeklyRetro">
+                  <AccordionTrigger className="text-xs font-medium py-2">Weekly Retro Prompt</AccordionTrigger>
+                  <AccordionContent>
+                    <Textarea
+                      value={prompts.weeklyRetro}
+                      onChange={(e) => setPrompts((p) => ({ ...p, weeklyRetro: e.target.value }))}
+                      className="text-xs font-mono min-h-[100px]"
+                    />
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1 text-xs"
+                  onClick={() => {
+                    resetCustomPrompts();
+                    setPrompts(getDefaultPrompts());
+                    toast.success("Prompts reset to defaults.");
+                  }}
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Reset to Defaults
+                </Button>
+                <div className="flex-1" />
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    saveCustomPrompts(prompts);
+                    toast.success("AI prompts saved.");
+                  }}
+                >
+                  Save Prompts
+                </Button>
+              </div>
+            </TabsContent>
+
+
             <TabsContent value="danger" className="space-y-4 mt-4">
               <div className="rounded-md border border-destructive/50 p-4 space-y-3">
                 <h4 className="text-sm font-semibold text-destructive flex items-center gap-1.5">

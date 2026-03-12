@@ -17,7 +17,7 @@ import {
   getFilteredEvents,
   eventsToDoingText,
 } from "@/lib/gcal-service";
-import { isAIConfigured, mergeTasks, polishText } from "@/lib/ai-service";
+import { isAIConfigured, mergeTasks, polishText, polishBlockers } from "@/lib/ai-service";
 
 interface EntryFormProps {
   entry: Entry | null;
@@ -43,23 +43,27 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
   const prevProjectRef = useRef(project);
   const formRef = useRef(form);
   formRef.current = form;
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
 
-  // Auto-save when switching date or project
+  // Sync form state ONLY when date or project changes (not when entry prop changes)
+  // This prevents the "cursor jump" bug where auto-save triggers parent re-render
+  // which passes a new entry ref, wiping out in-flight keystrokes.
   useEffect(() => {
     if (prevDateRef.current !== date || prevProjectRef.current !== project) {
       const prevForm = formRef.current;
       if (prevForm.done || prevForm.doing || prevForm.blockers) {
         const tasks = [...parseTasks(prevForm.done, "done"), ...parseTasks(prevForm.doing, "doing")];
         const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
-        onSave(prevProjectRef.current, { ...prevForm, hours: totalHours });
+        onSaveRef.current(prevProjectRef.current, { ...prevForm, hours: totalHours });
       }
       prevDateRef.current = date;
       prevProjectRef.current = project;
+      setForm(entry || createEmptyEntry(date));
+      setDismissed(new Set());
     }
-    setForm(entry || createEmptyEntry(date));
-    setDismissed(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entry, date, project]);
+  }, [date, project]);
 
   const doSave = useCallback((proj: string, entryToSave: Entry) => {
     try {
@@ -96,16 +100,16 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
     doSave(project, { ...current, date, hours: totalHours });
   };
 
+  // Force save pending changes on unmount — uses refs to avoid stale closures
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
-        // Force immediate save of pending changes before unmount
         const current = formRef.current;
         if (current.done || current.doing || current.blockers) {
           const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
           const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
-          onSave(prevProjectRef.current, { ...current, hours: totalHours });
+          onSaveRef.current(prevProjectRef.current, { ...current, hours: totalHours });
         }
       }
     };
@@ -161,13 +165,31 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
     }
   };
 
-  const handleUndoPolish = (field: "done" | "doing") => {
+  const handleUndoPolish = (field: "done" | "doing" | "blockers") => {
     const original = prePolishText[field];
     if (!original) return;
     setForm((prev) => ({ ...prev, [field]: original }));
     setPrePolishText((prev) => { const n = { ...prev }; delete n[field]; return n; });
     triggerAutoSave();
     toast.success("Reverted to original text");
+  };
+
+  const handleBlockerPolish = async () => {
+    const text = form.blockers;
+    if (!text.trim()) return;
+    setPrePolishText((prev) => ({ ...prev, blockers: text }));
+    setPolishing("blockers");
+    try {
+      const polished = await polishBlockers(text);
+      setForm((prev) => ({ ...prev, blockers: polished }));
+      triggerAutoSave();
+      toast.success("Blockers polished ✨ — Click Undo to revert", { duration: 5000 });
+    } catch (err) {
+      setPrePolishText((prev) => { const n = { ...prev }; delete n.blockers; return n; });
+      toast.error(err instanceof Error ? err.message : "AI polish failed");
+    } finally {
+      setPolishing(null);
+    }
   };
 
   const appendToField = (key: "done" | "doing", text: string) => {
@@ -416,6 +438,33 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
                     >
                       {merging ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                       Merge
+                    </Button>
+                  </div>
+                )}
+                {isAIConfigured() && key === "blockers" && (
+                  <div className="flex items-center gap-0.5">
+                    {prePolishText.blockers && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-[10px] gap-1 text-warning px-1.5 min-w-[44px]"
+                        onClick={() => handleUndoPolish("blockers")}
+                        title="Revert to original text"
+                      >
+                        <Undo2 className="w-3 h-3" />
+                        Undo
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-[10px] gap-1 text-muted-foreground px-1.5 min-w-[44px]"
+                      disabled={polishing === "blockers"}
+                      onClick={handleBlockerPolish}
+                      title="Polish blockers into professional language"
+                    >
+                      {polishing === "blockers" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                      ✨ Polish
                     </Button>
                   </div>
                 )}

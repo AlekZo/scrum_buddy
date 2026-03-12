@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { ScrumData, Entry, createEmptyEntry, getToday } from "@/lib/types";
 import { loadData, saveData } from "@/lib/storage";
 import { syncNow, initNetworkListeners, getCredentials, trackDeletedEntry, trackDeletedProject } from "@/lib/sync-service";
@@ -170,15 +170,24 @@ export function useScrumData() {
     setActiveProject((current) => (current === oldName ? newName : current));
   }, []);
 
-  const getEntriesForProject = useCallback(
-    (project: string): Entry[] => {
+  // Memoize sorted entries per project to prevent unnecessary re-allocations
+  const entriesCache = useMemo(() => {
+    const cache: Record<string, Entry[]> = {};
+    for (const project of data.projects) {
       const projectEntries = data.entries[project];
-      if (!projectEntries) return [];
-      return Object.values(projectEntries).sort(
+      if (!projectEntries) { cache[project] = []; continue; }
+      cache[project] = Object.values(projectEntries).sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
       );
+    }
+    return cache;
+  }, [data.entries, data.projects]);
+
+  const getEntriesForProject = useCallback(
+    (project: string): Entry[] => {
+      return entriesCache[project] || [];
     },
-    [data.entries]
+    [entriesCache]
   );
 
   const importData = useCallback((newData: ScrumData) => {

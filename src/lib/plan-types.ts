@@ -1,3 +1,5 @@
+export type PlanTaskStatus = 'backlog' | 'active' | 'buffered' | 'reported';
+
 export interface PlanTask {
   id: string;
   text: string;
@@ -7,7 +9,13 @@ export interface PlanTask {
   teamHours: number;
   /** Actual expected or real hours */
   actualHours: number;
+  /** Hours as placed on the reporting matrix (stretched/inflated) */
+  reportedHours?: number;
   project: string;
+  /** Task lifecycle status */
+  status?: PlanTaskStatus;
+  /** Day assigned on the matrix grid (YYYY-MM-DD) */
+  slotDay?: string;
   /** @deprecated Use teamHours instead. Kept for backward compat during migration. */
   hours?: number;
 }
@@ -22,7 +30,8 @@ export const createPlanTask = (
   endDate: string,
   teamHours: number,
   project: string,
-  actualHours: number = 0
+  actualHours: number = 0,
+  status: PlanTaskStatus = 'active'
 ): PlanTask => ({
   id: crypto.randomUUID(),
   text,
@@ -30,7 +39,9 @@ export const createPlanTask = (
   endDate,
   teamHours,
   actualHours,
+  reportedHours: teamHours,
   project,
+  status,
 });
 
 /**

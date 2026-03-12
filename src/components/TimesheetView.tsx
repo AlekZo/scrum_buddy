@@ -67,6 +67,7 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [editDone, setEditDone] = useState("");
   const [editDoing, setEditDoing] = useState("");
+  const [editBlockers, setEditBlockers] = useState("");
 
   const rows = useMemo(() => {
     return entries.slice(0, 14).map((entry) => {
@@ -117,25 +118,37 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
     return result.sort((a, b) => b.hours - a.hours);
   }, [rows]);
 
+  // Calculate target based on CALENDAR weekdays between earliest and latest entry,
+  // not just entries that exist — prevents artificial inflation when days are missed.
   const grandTotal = rows.reduce((sum, r) => sum + r.totalHours, 0);
-  const workdayCount = rows.filter((r) => {
-    const d = new Date(r.entry.date + "T00:00:00");
-    const day = d.getDay();
-    return day !== 0 && day !== 6;
-  }).length;
-  const grandTarget = workdayCount * DAILY_TARGET;
+  const calendarWorkdays = useMemo(() => {
+    if (rows.length === 0) return 0;
+    const dates = rows.map(r => r.entry.date).sort();
+    const start = new Date(dates[0] + "T00:00:00");
+    const end = new Date(dates[dates.length - 1] + "T00:00:00");
+    let count = 0;
+    const d = new Date(start);
+    while (d <= end) {
+      const day = d.getDay();
+      if (day !== 0 && day !== 6) count++;
+      d.setDate(d.getDate() + 1);
+    }
+    return count;
+  }, [rows]);
+  const grandTarget = calendarWorkdays * DAILY_TARGET;
   const grandUtil = grandTarget > 0 ? (grandTotal / grandTarget) * 100 : 0;
 
   const startEdit = (entry: Entry) => {
     setEditingDate(entry.date);
     setEditDone(entry.done);
     setEditDoing(entry.doing);
+    setEditBlockers(entry.blockers);
   };
 
   const saveEdit = (entry: Entry) => {
     const doneTasks = parseTasks(editDone, "done");
     const totalHours = doneTasks.reduce((s, t) => s + t.hours, 0);
-    onSave(project, { ...entry, done: editDone, doing: editDoing, hours: totalHours });
+    onSave(project, { ...entry, done: editDone, doing: editDoing, blockers: editBlockers, hours: totalHours });
     setEditingDate(null);
     toast.success(`Updated ${entry.date}`);
   };
@@ -198,7 +211,7 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
               Timesheet · {project}
             </CardTitle>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span>{rows.length} days ({workdayCount} workdays)</span>
+              <span>{rows.length} entries ({calendarWorkdays} workdays)</span>
               <span>Target: <span className="font-mono font-semibold text-foreground">{DAILY_TARGET}h/day</span></span>
               <span>Logged: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandTotal.toFixed(1)}h</span></span>
               <span>Utilization: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandUtil.toFixed(0)}%</span></span>
@@ -259,6 +272,14 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
                                   value={editDoing}
                                   onChange={setEditDoing}
                                   className="min-h-[60px] text-xs font-mono mt-0.5 bg-background"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[10px] font-semibold text-warning uppercase tracking-wider">Blockers</label>
+                                <BulletTextarea
+                                  value={editBlockers}
+                                  onChange={setEditBlockers}
+                                  className="min-h-[40px] text-xs font-mono mt-0.5 bg-background"
                                 />
                               </div>
                             </div>

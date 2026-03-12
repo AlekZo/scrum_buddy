@@ -1,6 +1,8 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { parseTaskInput } from "@/lib/task-parser";
 import { PlanData, PlanTask, createPlanTask, getWeekDays, getWeekStart, getPlannedTasksForRange } from "@/lib/plan-types";
+import { MatrixPlanningView } from "@/components/MatrixPlanningView";
+import { AIBreakdownModal } from "@/components/AIBreakdownModal";
 import { getToday } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,6 +29,7 @@ import {
   Clock,
   Settings2,
   Type,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -39,12 +42,18 @@ interface PlanningViewProps {
   onUpdateTask: (taskId: string, updates: Partial<PlanTask>) => void;
 }
 
-type ViewMode = "week" | "list";
+type ViewMode = "week" | "list" | "matrix";
 const VIEW_MODE_KEY = "planning-view-mode";
+const WEEKS_SHOWN_KEY = "planning-weeks-shown";
 
 export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUpdateTask }: PlanningViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     return (localStorage.getItem(VIEW_MODE_KEY) as ViewMode) || "week";
+  });
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [weeksToShow, setWeeksToShow] = useState<number>(() => {
+    const saved = localStorage.getItem(WEEKS_SHOWN_KEY);
+    return saved ? Math.min(3, Math.max(1, parseInt(saved))) : 1;
   });
   const [currentWeekDate, setCurrentWeekDate] = useState(getToday());
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
@@ -58,12 +67,30 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
   }, [viewMode]);
 
   useEffect(() => {
+    localStorage.setItem(WEEKS_SHOWN_KEY, String(weeksToShow));
+  }, [weeksToShow]);
+
+  useEffect(() => {
     setSelectedTaskIds(new Set());
   }, [project, currentWeekDate]);
 
   const weekDays = useMemo(() => getWeekDays(currentWeekDate), [currentWeekDate]);
-  const weekStart = weekDays[0];
-  const weekEnd = weekDays[4];
+
+  // Multi-week: generate all days across 1-3 weeks
+  const allDays = useMemo(() => {
+    if (weeksToShow <= 1) return weekDays;
+    const days: string[] = [...weekDays];
+    for (let w = 1; w < weeksToShow; w++) {
+      const nextMonday = new Date(weekDays[0] + "T12:00:00");
+      nextMonday.setDate(nextMonday.getDate() + w * 7);
+      const nextWeekDays = getWeekDays(nextMonday.toISOString().split("T")[0]);
+      days.push(...nextWeekDays);
+    }
+    return days;
+  }, [weekDays, weeksToShow]);
+
+  const weekStart = allDays[0];
+  const weekEnd = allDays[allDays.length - 1];
 
   const weekTasks = useMemo(
     () => getPlannedTasksForRange(planData, project, weekStart, weekEnd),
@@ -165,7 +192,7 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
   }, [weekTasks, onUpdateTask]);
 
   const viewProps: ViewProps = {
-    weekDays,
+    weekDays: allDays,
     tasksForDay,
     weekTasks,
     project,
@@ -181,6 +208,10 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
 
   const hasSelection = selectedTaskIds.size > 0;
 
+  const handleAiBankTasks = useCallback((tasks: PlanTask[]) => {
+    tasks.forEach((t) => onSaveTask(t));
+  }, [onSaveTask]);
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -192,7 +223,28 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
               Planning · {project}
             </CardTitle>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs gap-1.5 border-primary/30 text-primary hover:bg-primary/10"
+                onClick={() => setAiModalOpen(true)}
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                AI Breakdown
+              </Button>
               <div className="flex items-center rounded-md border border-border/50 overflow-hidden">
+                <button
+                  onClick={() => setViewMode("matrix")}
+                  className={cn(
+                    "px-2.5 py-1.5 text-xs font-medium transition-colors flex items-center gap-1",
+                    viewMode === "matrix"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card hover:bg-muted text-muted-foreground"
+                  )}
+                >
+                  <CalendarDays className="w-3.5 h-3.5" />
+                  Matrix
+                </button>
                 <button
                   onClick={() => setViewMode("week")}
                   className={cn(
@@ -240,6 +292,23 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
             >
               This week
             </Button>
+            <div className="h-5 w-px bg-border" />
+            <div className="flex items-center rounded-md border border-border/50 overflow-hidden">
+              {[1, 2, 3].map((w) => (
+                <button
+                  key={w}
+                  onClick={() => setWeeksToShow(w)}
+                  className={cn(
+                    "px-2 py-1 text-[10px] font-medium transition-colors",
+                    weeksToShow === w
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-card hover:bg-muted text-muted-foreground"
+                  )}
+                >
+                  {w}w
+                </button>
+              ))}
+            </div>
           </div>
         </CardHeader>
       </Card>
@@ -315,11 +384,26 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
         </Card>
       )}
 
-      {viewMode === "week" ? (
+      {viewMode === "matrix" ? (
+        <MatrixPlanningView
+          project={project}
+          planData={planData}
+          onSaveTask={onSaveTask}
+          onRemoveTask={onRemoveTask}
+          onUpdateTask={onUpdateTask}
+        />
+      ) : viewMode === "week" ? (
         <WeekGridView {...viewProps} />
       ) : (
         <DayListView {...viewProps} />
       )}
+
+      <AIBreakdownModal
+        open={aiModalOpen}
+        onOpenChange={setAiModalOpen}
+        project={project}
+        onSaveTasks={handleAiBankTasks}
+      />
     </div>
   );
 }
@@ -773,70 +857,88 @@ function WeekGridView({
         </p>
       )}
 
-      {/* Day columns */}
-      <div
-        className="grid gap-2 select-none"
-        style={{ gridTemplateColumns: `repeat(${weekDays.length}, minmax(0, 1fr))` }}
-      >
-        {weekDays.map((date) => {
-          const { weekday, dayMonth } = formatDayHeader(date);
-          const tasks = tasksForDay(date);
-          const hasTasks = tasks.length > 0;
-          const isSelected = selectedDays.has(date);
-          const isDragTarget = dragOverDay === date;
-
-          return (
-            <Card
-              key={date}
-              className={cn(
-                "border-border/50 min-h-[200px] transition-all",
-                isToday(date) && "ring-1 ring-primary/40",
-                hasTasks && !isSelected && "border-primary/20",
-                isSelected && "ring-2 ring-primary bg-primary/5 border-primary/40",
-                isDragTarget && "ring-2 ring-accent bg-accent/10",
-                !isSelected && "cursor-crosshair"
-              )}
-              onMouseDown={(e) => handleMouseDown(date, e)}
-              onMouseEnter={() => handleMouseEnter(date)}
-              onDragOver={(e) => handleDragOver(e, date)}
-              onDragLeave={handleDragLeave}
-              onDrop={(e) => handleDrop(e, date)}
+      {/* Day columns — grouped by week */}
+      {(() => {
+        const weeks: string[][] = [];
+        for (let i = 0; i < weekDays.length; i += 5) {
+          weeks.push(weekDays.slice(i, i + 5));
+        }
+        return weeks.map((weekChunk, wi) => (
+          <div key={wi} className="space-y-1">
+            {weeks.length > 1 && (
+              <div className="flex items-center gap-2 pt-1">
+                <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  Week of {new Date(weekChunk[0] + "T00:00:00").toLocaleDateString("en", { month: "short", day: "numeric" })}
+                </span>
+                <div className="flex-1 h-px bg-border/50" />
+              </div>
+            )}
+            <div
+              className="grid gap-2 select-none"
+              style={{ gridTemplateColumns: `repeat(${weekChunk.length}, minmax(0, 1fr))` }}
             >
-              <CardHeader className="p-2 pb-1">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs font-semibold">{weekday}</span>
-                    <span className="text-[10px] text-muted-foreground">{dayMonth}</span>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {isSelected && <div className="w-2 h-2 rounded-full bg-primary animate-in zoom-in" />}
-                    {hasTasks && !isSelected && <div className="w-1.5 h-1.5 rounded-full bg-primary" />}
-                  </div>
-                </div>
-                {isToday(date) && (
-                  <span className="text-[9px] font-mono bg-primary/10 text-primary px-1 rounded w-fit">TODAY</span>
-                )}
-              </CardHeader>
-              <CardContent className="p-2 pt-0 space-y-0.5">
-                {/* Quick add at TOP */}
-                <AddTaskInput date={date} project={project} onSave={onSaveTask} />
-                {tasks.map((task) => (
-                  <div key={task.id} data-task-item>
-                    <TaskItem
-                      task={task}
-                      isMultiDay={task.startDate !== task.endDate}
-                      onUpdate={onUpdateTask}
-                      onRemove={onRemoveTask}
-                      isSelected={selectedTaskIds.has(task.id)}
-                      onToggle={onToggleTask}
-                    />
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+              {weekChunk.map((date) => {
+                const { weekday, dayMonth } = formatDayHeader(date);
+                const tasks = tasksForDay(date);
+                const hasTasks = tasks.length > 0;
+                const isSelected = selectedDays.has(date);
+                const isDragTarget = dragOverDay === date;
+
+                return (
+                  <Card
+                    key={date}
+                    className={cn(
+                      "border-border/50 min-h-[160px] transition-all",
+                      isToday(date) && "ring-1 ring-primary/40",
+                      hasTasks && !isSelected && "border-primary/20",
+                      isSelected && "ring-2 ring-primary bg-primary/5 border-primary/40",
+                      isDragTarget && "ring-2 ring-accent bg-accent/10",
+                      !isSelected && "cursor-crosshair"
+                    )}
+                    onMouseDown={(e) => handleMouseDown(date, e)}
+                    onMouseEnter={() => handleMouseEnter(date)}
+                    onDragOver={(e) => handleDragOver(e, date)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => handleDrop(e, date)}
+                  >
+                    <CardHeader className="p-2 pb-1">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs font-semibold">{weekday}</span>
+                          <span className="text-[10px] text-muted-foreground">{dayMonth}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {isSelected && <div className="w-2 h-2 rounded-full bg-primary animate-in zoom-in" />}
+                          {hasTasks && !isSelected && <div className="w-1.5 h-1.5 rounded-full bg-primary" />}
+                        </div>
+                      </div>
+                      {isToday(date) && (
+                        <span className="text-[9px] font-mono bg-primary/10 text-primary px-1 rounded w-fit">TODAY</span>
+                      )}
+                    </CardHeader>
+                    <CardContent className="p-2 pt-0 space-y-0.5">
+                      {/* Quick add at TOP */}
+                      <AddTaskInput date={date} project={project} onSave={onSaveTask} />
+                      {tasks.map((task) => (
+                        <div key={task.id} data-task-item>
+                          <TaskItem
+                            task={task}
+                            isMultiDay={task.startDate !== task.endDate}
+                            onUpdate={onUpdateTask}
+                            onRemove={onRemoveTask}
+                            isSelected={selectedTaskIds.has(task.id)}
+                            onToggle={onToggleTask}
+                          />
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </div>
+        ));
+      })()}
 
       {/* Contextual floating popover after drag-select */}
       {floatingPos && selectedDays.size > 0 && (

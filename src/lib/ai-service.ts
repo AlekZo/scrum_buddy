@@ -1,7 +1,9 @@
 /**
- * AI service for task merging and deduplication
+ * AI service for task merging, polishing, and expansion
  * Works with any OpenAI-compatible API (OpenRouter, local LLMs, etc.)
  */
+
+import { getCustomPrompts } from "@/lib/ai-prompts";
 
 const AI_SETTINGS_KEY = "ai-settings";
 
@@ -87,7 +89,6 @@ async function chatCompletion(messages: ChatMessage[]): Promise<string> {
 
 /**
  * Merge/deduplicate a list of task lines using AI
- * Returns cleaned, consolidated task text
  */
 export async function mergeTasks(taskLines: string[]): Promise<string> {
   if (taskLines.length === 0) return "";
@@ -106,31 +107,37 @@ ${taskLines.map((l) => `- ${l}`).join("\n")}`;
 }
 
 /**
- * Polish a single text field: rewrite shorthand into concise, professional bullet points
+ * Polish a single text field using customizable prompt
  */
 export async function polishText(text: string): Promise<string> {
   if (!text.trim()) return text;
+  const prompts = getCustomPrompts();
 
   const result = await chatCompletion([
-    {
-      role: "system",
-      content:
-        "You rewrite shorthand task notes into concise, professional standup-style bullet points. " +
-        "Keep it SHORT — each bullet max 1 sentence. Use bullet points (•). " +
-        "Do NOT write paragraphs. Do NOT add filler words. Preserve time estimates. " +
-        "Preserve the original language of the tasks. Output ONLY the bullet list, nothing else.",
-    },
-    {
-      role: "user",
-      content: `Rewrite these shorthand notes into professional bullet points:\n\n${text}`,
-    },
+    { role: "system", content: prompts.standupPolish },
+    { role: "user", content: `Rewrite these shorthand notes into professional bullet points:\n\n${text}` },
   ]);
 
   return result.trim();
 }
 
 /**
- * Suggest a consolidated version of today's standup from raw entries
+ * Polish blockers into professional, diplomatic language
+ */
+export async function polishBlockers(text: string): Promise<string> {
+  if (!text.trim()) return text;
+  const prompts = getCustomPrompts();
+
+  const result = await chatCompletion([
+    { role: "system", content: prompts.blockerPolish },
+    { role: "user", content: `Rewrite these blocker notes into professional, solution-oriented language:\n\n${text}` },
+  ]);
+
+  return result.trim();
+}
+
+/**
+ * Polish a complete standup
  */
 export async function polishStandup(done: string, doing: string, blockers: string): Promise<{ done: string; doing: string; blockers: string }> {
   const prompt = `Polish this standup update. Merge duplicates, fix typos, make concise. Keep time estimates. Return EXACTLY three sections separated by "---". Preserve the original language of the tasks.
@@ -158,12 +165,13 @@ ${blockers || "(empty)"}`;
 }
 
 /**
- * Generate a weekly retrospective from a week of entries
+ * Generate a weekly retrospective
  */
 export async function generateWeeklyRetro(
   weekData: { date: string; done: string; doing: string; blockers: string; hours: number }[]
 ): Promise<string> {
   if (weekData.length === 0) return "No entries for this week.";
+  const prompts = getCustomPrompts();
 
   const entriesText = weekData
     .map((d) => `## ${d.date} (${d.hours}h)\nDone:\n${d.done || "(empty)"}\nDoing:\n${d.doing || "(empty)"}\nBlockers:\n${d.blockers || "(empty)"}`)
@@ -172,25 +180,15 @@ export async function generateWeeklyRetro(
   const totalHours = weekData.reduce((s, d) => s + d.hours, 0);
 
   const result = await chatCompletion([
-    {
-      role: "system",
-      content:
-        "You generate concise weekly retrospective summaries from daily standup logs. " +
-        "Output sections: 🏆 Key Accomplishments, 📊 Scope & Effort (total hours, biggest time sinks), " +
-        "🚧 Blockers Overcome, 🔮 Carry-Forward / Next Week. " +
-        "Use bullet points (•). Be analytical, not verbose. Preserve original language of task names.",
-    },
-    {
-      role: "user",
-      content: `Generate a weekly retrospective from these daily logs (${totalHours}h total):\n\n${entriesText}`,
-    },
+    { role: "system", content: prompts.weeklyRetro },
+    { role: "user", content: `Generate a weekly retrospective from these daily logs (${totalHours}h total):\n\n${entriesText}` },
   ]);
 
   return result.trim();
 }
 
 /**
- * Auto-categorize tasks with tags like #bugfix, #feature, #meetings, etc.
+ * Auto-categorize tasks with tags
  */
 export async function categorizeTasks(
   tasks: string[]
@@ -217,5 +215,84 @@ export async function categorizeTasks(
     return JSON.parse(cleaned);
   } catch {
     return tasks.map((t) => ({ task: t, tags: [] }));
+  }
+}
+
+/**
+ * Expand tasks into detailed sub-activities for timesheet padding
+ * Takes a list of tasks and breaks each into professional sub-activities
+ */
+export async function expandTasksForTimesheet(
+  tasks: { name: string; hours: number }[],
+  targetHours: number = 8
+): Promise<string> {
+  if (tasks.length === 0) return "";
+  const prompts = getCustomPrompts();
+
+  const taskList = tasks.map((t) => `• ${t.name} — ${t.hours}h`).join("\n");
+  const currentTotal = tasks.reduce((s, t) => s + t.hours, 0);
+
+  const result = await chatCompletion([
+    { role: "system", content: prompts.taskExpander },
+    {
+      role: "user",
+      content: `Break down these tasks into detailed sub-activities. Current total: ${currentTotal}h, target: ${targetHours}h. Distribute hours to fill the target.\n\n${taskList}`,
+    },
+  ]);
+
+  return result.trim();
+}
+
+export interface BreakdownTask {
+  taskName: string;
+  teamHours: number;
+  actualHours: number;
+}
+
+/**
+ * AI-powered epic/project breakdown into granular standup-ready tasks
+ * with dual time estimates (team vs actual)
+ */
+export async function generateProjectBreakdown(
+  description: string,
+  fileContext: string = ""
+): Promise<BreakdownTask[]> {
+  if (!description.trim() && !fileContext.trim()) return [];
+
+  const contextBlock = fileContext
+    ? `\n\nAdditional context from uploaded file:\n${fileContext}`
+    : "";
+
+  const result = await chatCompletion([
+    {
+      role: "system",
+      content:
+        "You are a senior software engineer planning a sub-project. " +
+        "Break requirements into 4-8 granular tasks suitable for daily Scrum standup updates. " +
+        "Return ONLY a valid JSON array with objects containing: " +
+        '"taskName" (action-oriented, past tense, e.g. "Drafted initial API endpoint specs"), ' +
+        '"teamHours" (estimated hours for a standard developer, max 8 per task), and ' +
+        '"actualHours" (estimated hours for an AI-assisted 10x developer, usually 10-20% of teamHours). ' +
+        "No markdown fences, no explanation. Just valid JSON.",
+    },
+    {
+      role: "user",
+      content: `Break down this project into standup-ready tasks with dual time estimates:\n\n${description}${contextBlock}`,
+    },
+  ]);
+
+  try {
+    const cleaned = result.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    const parsed = JSON.parse(cleaned) as BreakdownTask[];
+    // Validate & sanitize
+    return parsed
+      .filter((t) => t.taskName && typeof t.taskName === "string")
+      .map((t) => ({
+        taskName: t.taskName.trim(),
+        teamHours: Math.max(0.25, Number(t.teamHours) || 1),
+        actualHours: Math.max(0.25, Number(t.actualHours) || 0.25),
+      }));
+  } catch {
+    throw new Error("AI returned invalid JSON. Please try again.");
   }
 }
