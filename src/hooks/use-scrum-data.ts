@@ -151,8 +151,7 @@ export function useScrumData() {
     // Reset activeProject if it was the deleted one
     setActiveProject((current) => {
       if (current !== name) return current;
-      const latest = dataRef.current.projects.filter((p) => p !== name);
-      return latest.length > 0 ? latest[0] : "";
+      return "";
     });
   }, []);
 

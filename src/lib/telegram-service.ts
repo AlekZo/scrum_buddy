@@ -34,19 +34,19 @@ export function isTelegramConfigured(): boolean {
   return !!getTelegramSettings();
 }
 
-function escapeHTML(str: string): string {
+/** Escape text for safe use inside Telegram HTML messages */
+export function escapeHTML(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-export async function sendTelegramMessage(text: string): Promise<void> {
+/**
+ * Send a message via Telegram Bot API.
+ * IMPORTANT: The caller must pass already-valid HTML.
+ * Use escapeHTML() on user content before wrapping in tags.
+ */
+export async function sendTelegramMessage(html: string): Promise<void> {
   const settings = getTelegramSettings();
   if (!settings) throw new Error("Telegram not configured");
-
-  // Escape user content but preserve our own <b> tags
-  // Strategy: escape everything, then restore <b> and </b>
-  const escaped = escapeHTML(text)
-    .replace(/&lt;b&gt;/g, "<b>")
-    .replace(/&lt;\/b&gt;/g, "</b>");
 
   try {
     const res = await fetch(`https://api.telegram.org/bot${settings.botToken}/sendMessage`, {
@@ -54,7 +54,7 @@ export async function sendTelegramMessage(text: string): Promise<void> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: settings.chatId,
-        text: escaped,
+        text: html,
         parse_mode: "HTML",
       }),
     });

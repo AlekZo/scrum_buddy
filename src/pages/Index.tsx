@@ -1,18 +1,24 @@
-import { useMemo, useCallback, useEffect, useRef } from "react";
+import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useScrumData } from "@/hooks/use-scrum-data";
 import { usePlanData } from "@/hooks/use-plan-data";
-import { ProjectTabs } from "@/components/ProjectTabs";
+import { ProjectSidebar } from "@/components/ProjectSidebar";
+import { ProjectDropdown } from "@/components/ProjectDropdown";
+import { EmptyState } from "@/components/EmptyState";
 import { DatePicker } from "@/components/DatePicker";
 import { DataIO } from "@/components/DataIO";
 import { EntryForm } from "@/components/EntryForm";
 import { StandupView } from "@/components/StandupView";
 import { TimesheetView } from "@/components/TimesheetView";
 import { RecentEntries } from "@/components/RecentEntries";
+import { CalendarLogView } from "@/components/CalendarLogView";
 import { YesterdayPanel } from "@/components/YesterdayPanel";
 import { PlanningView } from "@/components/PlanningView";
+import { WeeklyRetro } from "@/components/WeeklyRetro";
 import { SettingsModal } from "@/components/SettingsModal";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { SyncStatusIndicator } from "@/components/SyncStatusIndicator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { ClipboardList } from "lucide-react";
 import { getYesterdayDate } from "@/lib/types";
 import { parseTasks } from "@/lib/task-parser";
@@ -20,8 +26,12 @@ import { checkAndSendStandups, StandupDataProvider } from "@/lib/standup-schedul
 import { isTelegramConfigured } from "@/lib/telegram-service";
 import { toast } from "sonner";
 import { stripActualHours } from "@/lib/text-sanitizer";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 const Index = () => {
+  const isMobile = useIsMobile();
+  const [showAddProject, setShowAddProject] = useState(false);
+
   const {
     data,
     activeProject,
@@ -45,6 +55,19 @@ const Index = () => {
   const handleCredentialsChange = useCallback(() => {
     triggerSync();
   }, [triggerSync]);
+
+  const handleAddProject = useCallback((name: string) => {
+    addProject(name);
+    setShowAddProject(false);
+  }, [addProject]);
+
+  // Empty state CTA handler
+  const handleEmptyStateAdd = useCallback(() => {
+    const name = prompt("Project name:");
+    if (name?.trim()) {
+      addProject(name.trim());
+    }
+  }, [addProject]);
 
   const yesterdayDate = getYesterdayDate(selectedDate);
   const yesterday = useMemo(
@@ -80,13 +103,14 @@ const Index = () => {
     const yd = getYesterdayDate(selectedDate);
     const y = getEntry(project, yd);
     const t = getEntry(project, selectedDate);
-    const clean = (text: string) => stripActualHours(text).replace(/•/g, "·").replace(/[<>]/g, "");
+    const escapeHTML = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const clean = (text: string) => escapeHTML(stripActualHours(text).replace(/•/g, "·"));
     const parts = [
       `<b>Yesterday:</b>\n${clean(y?.done || "No entry")}`,
       `<b>Today:</b>\n${clean(t?.doing || t?.done || "No entry yet")}`,
       `<b>Blockers:</b>\n${clean(t?.blockers || y?.blockers || "None 🎉")}`,
     ];
-    return `📋 <b>${project}</b>\n\n${parts.join("\n\n")}`;
+    return `📋 <b>${escapeHTML(project)}</b>\n\n${parts.join("\n\n")}`;
   }, [selectedDate, getEntry]);
 
   // Standup scheduler: check every 30s
@@ -95,6 +119,7 @@ const Index = () => {
   const projectsRef = useRef(data.projects);
   projectsRef.current = data.projects;
 
+  const initCheckRun = useRef(false);
   useEffect(() => {
     if (!isTelegramConfigured()) return;
     const provider: StandupDataProvider = {
@@ -107,51 +132,69 @@ const Index = () => {
         toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
       }
     }, 30_000);
-    // Check immediately on mount
-    checkAndSendStandups(provider).then((sent) => {
-      if (sent.length > 0) toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
-    });
+    if (!initCheckRun.current) {
+      initCheckRun.current = true;
+      checkAndSendStandups(provider).then((sent) => {
+        if (sent.length > 0) toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
+      });
+    }
     return () => clearInterval(interval);
   }, []);
 
-  return (
-    <div className="min-h-screen bg-background">
+  const hasProjects = data.projects.length > 0;
+
+  const mainContent = (
+    <>
+      {/* Header */}
       <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-2 sm:px-4 py-2 sm:py-3">
-          <div className="flex items-center justify-between mb-2 sm:mb-3 gap-2">
+        <div className="px-3 sm:px-6 py-2 sm:py-3">
+          <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
+              {/* Desktop: sidebar trigger */}
+              {!isMobile && hasProjects && <SidebarTrigger className="shrink-0" />}
               <ClipboardList className="w-5 h-5 text-primary shrink-0 hidden sm:block" />
               <h1 className="text-sm sm:text-lg font-bold tracking-tight truncate">Scrum Logger</h1>
               <SyncStatusIndicator />
             </div>
-            <div className="flex items-center gap-1 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0">
+              {/* Mobile: project dropdown */}
+              {isMobile && hasProjects && (
+                <ProjectDropdown
+                  projects={data.projects}
+                  activeProject={activeProject}
+                  onSelect={setActiveProject}
+                  onAdd={handleAddProject}
+                />
+              )}
               <div className="hidden sm:flex items-center gap-1">
                 <DataIO data={data} onImport={importData} />
               </div>
+              <ThemeToggle />
               <SettingsModal onCredentialsChange={handleCredentialsChange} projects={data.projects} />
               <DatePicker date={selectedDate} onChange={setSelectedDate} />
             </div>
           </div>
-          <ProjectTabs
-            projects={data.projects}
-            activeProject={activeProject}
-            onSelect={setActiveProject}
-            onAdd={addProject}
-            onRemove={removeProject}
-            onRename={renameProject}
-          />
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-2 sm:px-4 pb-6">
-        {activeProject ? (
+      {/* Main content */}
+      <main className="px-3 sm:px-6 pb-6">
+        {!hasProjects ? (
+          <EmptyState onAddProject={handleEmptyStateAdd} />
+        ) : !activeProject ? (
+          <div className="text-center py-20 text-muted-foreground">
+            <p>Select a project from the sidebar.</p>
+          </div>
+        ) : (
           <Tabs defaultValue="log" className="space-y-0">
-            <div className="sticky top-[73px] z-[9] bg-background/95 backdrop-blur-sm py-3 border-b border-border/30 -mx-2 sm:-mx-4 px-2 sm:px-4">
+            {/* Sticky view tabs — uses CSS sticky, no hardcoded offset */}
+            <div className="sticky top-[49px] sm:top-[57px] z-[9] bg-background/95 backdrop-blur-sm py-3 border-b border-border/30">
               <TabsList className="w-full sm:w-auto">
-                <TabsTrigger value="log" className="flex-1 sm:flex-none">Log</TabsTrigger>
-                <TabsTrigger value="planning" className="flex-1 sm:flex-none">Planning</TabsTrigger>
-                <TabsTrigger value="standup" className="flex-1 sm:flex-none">Standup</TabsTrigger>
-                <TabsTrigger value="timesheet" className="flex-1 sm:flex-none">Timesheet</TabsTrigger>
+                <TabsTrigger value="log" className="flex-1 sm:flex-none min-h-[36px]">Log</TabsTrigger>
+                <TabsTrigger value="planning" className="flex-1 sm:flex-none min-h-[36px]">Planning</TabsTrigger>
+                <TabsTrigger value="standup" className="flex-1 sm:flex-none min-h-[36px]">Standup</TabsTrigger>
+                <TabsTrigger value="timesheet" className="flex-1 sm:flex-none min-h-[36px]">Timesheet</TabsTrigger>
+                <TabsTrigger value="insights" className="flex-1 sm:flex-none min-h-[36px]">AI Insights</TabsTrigger>
               </TabsList>
             </div>
 
@@ -170,8 +213,12 @@ const Index = () => {
                   />
                 </div>
                 <div className="space-y-4">
+                  <CalendarLogView
+                    entries={entries}
+                    selectedDate={selectedDate}
+                    onSelectDate={setSelectedDate}
+                  />
                   <YesterdayPanel entry={yesterday} date={yesterdayDate} />
-                  <RecentEntries entries={entries} onSelectDate={setSelectedDate} />
                 </div>
               </div>
             </TabsContent>
@@ -198,14 +245,37 @@ const Index = () => {
             <TabsContent value="timesheet" className="mt-4">
               <TimesheetView entries={entries} project={activeProject} onSave={saveEntry} planData={planData} />
             </TabsContent>
+
+            <TabsContent value="insights" className="mt-4">
+              <WeeklyRetro entries={entries} project={activeProject} selectedDate={selectedDate} />
+            </TabsContent>
           </Tabs>
-        ) : (
-          <div className="text-center py-20 text-muted-foreground">
-            <p>Add a project to get started.</p>
-          </div>
         )}
       </main>
-    </div>
+    </>
+  );
+
+  // Desktop: sidebar layout. Mobile: no sidebar (uses dropdown).
+  if (isMobile || !hasProjects) {
+    return <div className="min-h-screen bg-background">{mainContent}</div>;
+  }
+
+  return (
+    <SidebarProvider>
+      <div className="min-h-screen flex w-full bg-background">
+        <ProjectSidebar
+          projects={data.projects}
+          activeProject={activeProject}
+          onSelect={setActiveProject}
+          onAdd={handleAddProject}
+          onRemove={removeProject}
+          onRename={renameProject}
+        />
+        <div className="flex-1 flex flex-col min-w-0">
+          {mainContent}
+        </div>
+      </div>
+    </SidebarProvider>
   );
 };
 

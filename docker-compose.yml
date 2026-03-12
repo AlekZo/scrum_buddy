@@ -1,12 +1,8 @@
-version: "3.8"
-
 services:
   app:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${PORT:-8080}:80"
-    env_file:
-      - .env
+      - "7878:80"
     restart: unless-stopped

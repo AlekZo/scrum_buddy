@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ParsedTasksDisplay } from "@/components/ParsedTasksDisplay";
 import { PlannedPanel } from "@/components/PlannedPanel";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar, Sparkles, Wand2 } from "lucide-react";
+import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar, Sparkles, Wand2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   isGCalConfigured,
@@ -36,6 +36,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [merging, setMerging] = useState(false);
   const [polishing, setPolishing] = useState<string | null>(null);
+  const [prePolishText, setPrePolishText] = useState<Record<string, string>>({});
   const [lastError, setLastError] = useState<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevDateRef = useRef(date);
@@ -144,17 +145,29 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
   const handleAIPolish = async (field: "done" | "doing") => {
     const text = form[field];
     if (!text.trim()) return;
+    // Save pre-polish text for undo
+    setPrePolishText((prev) => ({ ...prev, [field]: text }));
     setPolishing(field);
     try {
       const polished = await polishText(text);
       setForm((prev) => ({ ...prev, [field]: polished }));
       triggerAutoSave();
-      toast.success("Text polished by AI ✨");
+      toast.success("Text polished by AI ✨ — Click Undo to revert", { duration: 5000 });
     } catch (err) {
+      setPrePolishText((prev) => { const n = { ...prev }; delete n[field]; return n; });
       toast.error(err instanceof Error ? err.message : "AI polish failed");
     } finally {
       setPolishing(null);
     }
+  };
+
+  const handleUndoPolish = (field: "done" | "doing") => {
+    const original = prePolishText[field];
+    if (!original) return;
+    setForm((prev) => ({ ...prev, [field]: original }));
+    setPrePolishText((prev) => { const n = { ...prev }; delete n[field]; return n; });
+    triggerAutoSave();
+    toast.success("Reverted to original text");
   };
 
   const appendToField = (key: "done" | "doing", text: string) => {
@@ -370,10 +383,22 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
                 </label>
                 {isAIConfigured() && key !== "blockers" && (
                   <div className="flex items-center gap-0.5">
+                    {prePolishText[key] && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-6 text-[10px] gap-1 text-warning px-1.5 min-w-[44px]"
+                        onClick={() => handleUndoPolish(key)}
+                        title="Revert to original text"
+                      >
+                        <Undo2 className="w-3 h-3" />
+                        Undo
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-5 text-[10px] gap-1 text-muted-foreground px-1.5"
+                      className="h-6 text-[10px] gap-1 text-muted-foreground px-1.5 min-w-[44px]"
                       disabled={polishing === key}
                       onClick={() => handleAIPolish(key)}
                       title="Rewrite shorthand into professional text"
@@ -384,7 +409,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-5 text-[10px] gap-1 text-muted-foreground px-1.5"
+                      className="h-6 text-[10px] gap-1 text-muted-foreground px-1.5 min-w-[44px]"
                       disabled={merging}
                       onClick={() => handleAIMerge(key)}
                       title="Merge & deduplicate tasks with AI"
@@ -395,13 +420,22 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
                   </div>
                 )}
               </div>
-              <RichTextEditor
-                value={form[key]}
-                onChange={(val) => updateField(key, val)}
-                placeholder={placeholder}
-                suggestions={key !== "blockers" ? historicalNames : undefined}
-                className="bg-muted/30 border-border/50 focus-within:bg-background transition-colors"
-              />
+              {polishing === key ? (
+                <div className="rounded-md border border-border/50 bg-muted/30 p-3 space-y-2 animate-pulse">
+                  <div className="h-3 bg-muted rounded w-3/4" />
+                  <div className="h-3 bg-muted rounded w-1/2" />
+                  <div className="h-3 bg-muted rounded w-5/6" />
+                  <p className="text-[10px] text-muted-foreground text-center mt-2">AI is polishing your text…</p>
+                </div>
+              ) : (
+                <RichTextEditor
+                  value={form[key]}
+                  onChange={(val) => updateField(key, val)}
+                  placeholder={placeholder}
+                  suggestions={key !== "blockers" ? historicalNames : undefined}
+                  className="bg-muted/30 border-border/50 focus-within:bg-background transition-colors"
+                />
+              )}
             </div>
           ))}
         </CardContent>

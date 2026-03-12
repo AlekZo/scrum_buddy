@@ -121,10 +121,14 @@ function extractHours(text: string): number {
 function cleanTaskText(text: string): string {
   return text
     // Remove dual-time patterns FIRST (before single patterns eat them)
-    // "1h/3h", "1.5h / 4h", "30m/2h"
+    // With dash: "- 1h/3h", "- 1.5h / 4h", "- 30m/2h"
     .replace(/\s*[-–—]\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\/\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*/gi, "")
-    // "1h (3h)"
+    // Without dash: "3h/4h" at end or after space
+    .replace(/\s+\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\/\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*$/gi, "")
+    // "1h (3h)" with dash
     .replace(/\s*[-–—]\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\(\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\)\s*/gi, "")
+    // "1h (3h)" without dash
+    .replace(/\s+\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\(\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\)\s*$/gi, "")
     // Remove Russian time patterns
     .replace(/\s*[-–—]\s*\d+[.,]?\d*\s*ч\s*/gi, "")
     .replace(/\s*\(\s*\d+[.,]?\d*\s*ч\s*\)\s*/gi, "")
@@ -138,6 +142,18 @@ function cleanTaskText(text: string): string {
     .replace(/\s+\d+\.?\d*\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?)\s*$/gi, "")
     .replace(/\d+\s*h\s*\d+\s*m/gi, "")
     .trim();
+}
+
+/**
+ * Parse a single line of text to extract task name and dual hours.
+ * Useful for planning inputs that accept "task - 2h" or "task - 1h/3h" shorthand.
+ */
+export function parseTaskInput(text: string): { name: string; teamHours: number; actualHours: number } {
+  const trimmed = text.trim().replace(/^[-•*]\s*/, "");
+  if (!trimmed) return { name: "", teamHours: 0, actualHours: 0 };
+  const { actual, team } = extractDualHours(trimmed);
+  const name = cleanTaskText(trimmed) || trimmed;
+  return { name, teamHours: team, actualHours: actual };
 }
 
 /**

@@ -75,7 +75,13 @@ async function chatCompletion(messages: ChatMessage[]): Promise<string> {
     throw new Error(`AI error (${res.status}): ${text.slice(0, 200)}`);
   }
 
-  const data = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    const text = await res.text().catch(() => "(unreadable)");
+    throw new Error(`AI returned non-JSON response: ${text.slice(0, 200)}`);
+  }
   return data.choices?.[0]?.message?.content || "";
 }
 
@@ -149,4 +155,67 @@ ${blockers || "(empty)"}`;
     doing: parts[1] || doing,
     blockers: parts[2] || blockers,
   };
+}
+
+/**
+ * Generate a weekly retrospective from a week of entries
+ */
+export async function generateWeeklyRetro(
+  weekData: { date: string; done: string; doing: string; blockers: string; hours: number }[]
+): Promise<string> {
+  if (weekData.length === 0) return "No entries for this week.";
+
+  const entriesText = weekData
+    .map((d) => `## ${d.date} (${d.hours}h)\nDone:\n${d.done || "(empty)"}\nDoing:\n${d.doing || "(empty)"}\nBlockers:\n${d.blockers || "(empty)"}`)
+    .join("\n\n");
+
+  const totalHours = weekData.reduce((s, d) => s + d.hours, 0);
+
+  const result = await chatCompletion([
+    {
+      role: "system",
+      content:
+        "You generate concise weekly retrospective summaries from daily standup logs. " +
+        "Output sections: 🏆 Key Accomplishments, 📊 Scope & Effort (total hours, biggest time sinks), " +
+        "🚧 Blockers Overcome, 🔮 Carry-Forward / Next Week. " +
+        "Use bullet points (•). Be analytical, not verbose. Preserve original language of task names.",
+    },
+    {
+      role: "user",
+      content: `Generate a weekly retrospective from these daily logs (${totalHours}h total):\n\n${entriesText}`,
+    },
+  ]);
+
+  return result.trim();
+}
+
+/**
+ * Auto-categorize tasks with tags like #bugfix, #feature, #meetings, etc.
+ */
+export async function categorizeTasks(
+  tasks: string[]
+): Promise<{ task: string; tags: string[] }[]> {
+  if (tasks.length === 0) return [];
+
+  const result = await chatCompletion([
+    {
+      role: "system",
+      content:
+        "You categorize development tasks. For each task, assign 1-2 tags from: " +
+        "#feature, #bugfix, #meetings, #review, #devops, #docs, #refactor, #testing, #design, #research, #support, #planning. " +
+        "Return ONLY a JSON array of objects with 'task' (original text) and 'tags' (array of tag strings). " +
+        "No markdown fences, no explanation. Just valid JSON.",
+    },
+    {
+      role: "user",
+      content: `Categorize these tasks:\n${tasks.map((t, i) => `${i + 1}. ${t}`).join("\n")}`,
+    },
+  ]);
+
+  try {
+    const cleaned = result.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
+    return JSON.parse(cleaned);
+  } catch {
+    return tasks.map((t) => ({ task: t, tags: [] }));
+  }
 }

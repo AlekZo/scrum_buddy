@@ -27,7 +27,7 @@ function pruneEntries(data: ScrumData): ScrumData {
   for (const project of pruned.projects) {
     const entries = pruned.entries[project];
     if (!entries) continue;
-    const sorted = Object.values(entries).sort((a, b) => b.date.localeCompare(a.date));
+    const sorted = Object.values(entries).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     if (sorted.length > MAX_ENTRIES_PER_PROJECT) {
       const kept: Record<string, typeof sorted[0]> = {};
       for (const entry of sorted.slice(0, MAX_ENTRIES_PER_PROJECT)) {
@@ -53,7 +53,7 @@ export function saveData(data: ScrumData): void {
         for (const project of aggressive.projects) {
           const entries = aggressive.entries[project];
           if (!entries) continue;
-          const sorted = Object.values(entries).sort((a, b) => b.date.localeCompare(a.date));
+          const sorted = Object.values(entries).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
           if (sorted.length > 90) {
             const kept: Record<string, typeof sorted[0]> = {};
             for (const entry of sorted.slice(0, 90)) {

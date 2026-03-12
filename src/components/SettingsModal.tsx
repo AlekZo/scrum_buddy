@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -510,6 +510,26 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
                     <Unplug className="w-3.5 h-3.5" /> Disconnect
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!tgBotToken.trim() || !tgChatId.trim()}
+                  onClick={async () => {
+                    try {
+                      const res = await fetch(`https://api.telegram.org/bot${tgBotToken.trim()}/getMe`);
+                      const data = await res.json();
+                      if (data.ok) {
+                        toast.success(`Connected to bot: @${data.result.username}`);
+                      } else {
+                        toast.error(`Invalid token: ${data.description}`);
+                      }
+                    } catch {
+                      toast.error("Network error — could not reach Telegram API");
+                    }
+                  }}
+                >
+                  Test Connection
+                </Button>
                 <div className="flex-1" />
                 <Button
                   size="sm"

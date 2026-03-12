@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, ListTodo, AlertTriangle, Copy, Send, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { isTelegramConfigured, sendTelegramMessage } from "@/lib/telegram-service";
+import { isTelegramConfigured, sendTelegramMessage, escapeHTML } from "@/lib/telegram-service";
 import { useState } from "react";
 
 interface StandupViewProps {
@@ -45,10 +45,10 @@ function buildSections(yesterday: Entry | null, today: Entry | null) {
 }
 
 function formatStandupText(project: string, yesterday: Entry | null, today: Entry | null): string {
-  const clean = (text: string) => text.replace(/•/g, "·").replace(/[<>]/g, "");
+  const clean = (text: string) => escapeHTML(text.replace(/•/g, "·"));
   const sections = buildSections(yesterday, today);
   const lines = sections.map((s) => `<b>${s.title}:</b>\n${clean(s.content)}`).join("\n\n");
-  return `📋 <b>${project}</b>\n\n${lines}`;
+  return `📋 <b>${escapeHTML(project)}</b>\n\n${lines}`;
 }
 
 export function StandupView({ project, yesterday, today, allProjectsStandup }: StandupViewProps) {
@@ -119,7 +119,7 @@ export function StandupView({ project, yesterday, today, allProjectsStandup }: S
               size="sm"
               onClick={handleSendTelegram}
               disabled={sending}
-              className="gap-1.5 text-xs"
+              className="gap-1.5 text-xs min-h-[36px] min-w-[44px]"
             >
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               {allProjectsStandup && allProjectsStandup.length > 1
@@ -127,7 +127,7 @@ export function StandupView({ project, yesterday, today, allProjectsStandup }: S
                 : "Send to TG"}
             </Button>
           )}
-          <Button variant="ghost" size="sm" onClick={copyToClipboard} className="gap-1.5 text-muted-foreground">
+          <Button variant="ghost" size="sm" onClick={copyToClipboard} className="gap-1.5 text-muted-foreground min-h-[36px] min-w-[44px]">
             <Copy className="w-4 h-4" /> Copy
           </Button>
         </div>
