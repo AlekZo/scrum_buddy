@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { isTelegramConfigured, sendTelegramMessage, escapeHTML } from "@/lib/telegram-service";
 import { useState } from "react";
+import { useI18n } from "@/lib/i18n";
 
 interface StandupViewProps {
   project: string;
@@ -52,6 +53,7 @@ function formatStandupText(project: string, yesterday: Entry | null, today: Entr
 }
 
 export function StandupView({ project, yesterday, today, allProjectsStandup }: StandupViewProps) {
+  const { t } = useI18n();
   const [sending, setSending] = useState(false);
   const sections = buildSections(yesterday, today);
 
@@ -128,7 +130,7 @@ export function StandupView({ project, yesterday, today, allProjectsStandup }: S
             </Button>
           )}
           <Button variant="ghost" size="sm" onClick={copyToClipboard} className="gap-1.5 text-muted-foreground min-h-[36px] min-w-[44px]">
-            <Copy className="w-4 h-4" /> Copy
+            <Copy className="w-4 h-4" /> {t("common.copy")}
           </Button>
         </div>
       </CardHeader>

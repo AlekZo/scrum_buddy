@@ -7,9 +7,10 @@ interface RichTextEditorProps {
   placeholder?: string;
   className?: string;
   suggestions?: string[];
+  disabled?: boolean;
 }
 
-export function RichTextEditor({ value, onChange, placeholder, className, suggestions = [] }: RichTextEditorProps) {
+export function RichTextEditor({ value, onChange, placeholder, className, suggestions = [], disabled = false }: RichTextEditorProps) {
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const [focused, setFocused] = React.useState(false);
   const [showSuggestions, setShowSuggestions] = React.useState(false);
@@ -207,11 +208,11 @@ export function RichTextEditor({ value, onChange, placeholder, className, sugges
   const hasFormatting = value.includes("**") || value.includes("*") || value.includes("`");
 
   return (
-    <div className={cn("space-y-0 relative", className)}>
+    <div className={cn("space-y-0 relative", disabled && "opacity-50 pointer-events-none", className)}>
       <textarea
         ref={textareaRef}
         className={cn(
-          "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono resize-none",
+          "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-base sm:text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 font-mono resize-none",
         )}
         value={value}
         onChange={handleChange}
@@ -219,6 +220,7 @@ export function RichTextEditor({ value, onChange, placeholder, className, sugges
         onFocus={handleFocus}
         onBlur={handleBlur}
         placeholder={placeholder}
+        disabled={disabled}
       />
 
       {/* Autocomplete dropdown */}

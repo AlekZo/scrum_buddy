@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Entry } from "@/lib/types";
 import { PlanData, getPlannedTasksForDate, getWeekStart, getWeekDays } from "@/lib/plan-types";
 import { parseTasks } from "@/lib/task-parser";
@@ -22,7 +23,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { BarChart3, Pencil, Check, X } from "lucide-react";
+import { BarChart3, Pencil, Check, X, Copy } from "lucide-react";
 import { toast } from "sonner";
 
 interface TimesheetViewProps {
@@ -64,6 +65,7 @@ function TruncatedCell({ text, maxWidth = "250px" }: { text: string; maxWidth?: 
 }
 
 export function TimesheetView({ entries, project, onSave, planData }: TimesheetViewProps) {
+  const { t } = useI18n();
   const [editingDate, setEditingDate] = useState<string | null>(null);
   const [editDone, setEditDone] = useState("");
   const [editDoing, setEditDoing] = useState("");
@@ -206,18 +208,46 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
         {/* Summary row */}
         <Card className="border-border/50">
           <CardHeader className="pb-3">
-            <CardTitle className="text-lg font-semibold flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-primary" />
-              Timesheet · {project}
-            </CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <BarChart3 className="w-5 h-5 text-primary" />
+                Timesheet · {project}
+              </CardTitle>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-muted-foreground min-h-[36px] min-w-[44px]"
+                onClick={async () => {
+                  const lines = rows.map((r) => {
+                    const { weekday, display } = fmtDay(r.entry.date);
+                    const tasks = r.doneTasks.map((t) => t.text).join(", ");
+                    return `${weekday} ${display}: ${r.totalHours.toFixed(1)}h — ${tasks || "No tasks"}`;
+                  });
+                  const text = [
+                    `Timesheet · ${project}`,
+                    `${rows.length} entries (${calendarWorkdays} workdays) · ${grandTotal.toFixed(1)}h logged · ${grandUtil.toFixed(0)}% utilization`,
+                    "",
+                    ...lines,
+                  ].join("\n");
+                  try {
+                    await navigator.clipboard.writeText(text);
+                    toast.success("Timesheet copied!");
+                  } catch {
+                    toast.error("Failed to copy");
+                  }
+                }}
+              >
+                <Copy className="w-4 h-4" /> {t("common.copy")}
+              </Button>
+            </div>
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span>{rows.length} entries ({calendarWorkdays} workdays)</span>
-              <span>Target: <span className="font-mono font-semibold text-foreground">{DAILY_TARGET}h/day</span></span>
-              <span>Logged: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandTotal.toFixed(1)}h</span></span>
-              <span>Utilization: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandUtil.toFixed(0)}%</span></span>
+              <span>{rows.length} {t("timesheet.entries")} ({calendarWorkdays} {t("timesheet.workdays")})</span>
+              <span>{t("timesheet.target")}: <span className="font-mono font-semibold text-foreground">{DAILY_TARGET}h/day</span></span>
+              <span>{t("timesheet.logged")}: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandTotal.toFixed(1)}h</span></span>
+              <span>{t("timesheet.utilization")}: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandUtil.toFixed(0)}%</span></span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Hours are calculated from <span className="font-semibold text-foreground">"What I did"</span> only. "What I'm doing next" counts toward the next day.
+              {t("timesheet.hoursNote")} <span className="font-semibold text-foreground">"{t("entry.whatIDid")}"</span>
             </p>
           </CardHeader>
         </Card>

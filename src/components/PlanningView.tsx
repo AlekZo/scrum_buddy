@@ -292,17 +292,16 @@ export function PlanningView({ project, planData, onSaveTask, onRemoveTask, onUp
             >
               This week
             </Button>
-            <div className="h-5 w-px bg-border" />
-            <div className="flex items-center rounded-md border border-border/50 overflow-hidden">
+            <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5">
               {[1, 2, 3].map((w) => (
                 <button
                   key={w}
                   onClick={() => setWeeksToShow(w)}
                   className={cn(
-                    "px-2 py-1 text-[10px] font-medium transition-colors",
+                    "px-2.5 py-1 text-xs font-medium rounded-md transition-all",
                     weeksToShow === w
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-card hover:bg-muted text-muted-foreground"
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   {w}w

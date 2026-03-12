@@ -1,14 +1,16 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useI18n } from "@/lib/i18n";
 import { Entry, createEmptyEntry, ParsedTask } from "@/lib/types";
 import { PlanData } from "@/lib/plan-types";
 import { parseTasks, findMergeSuggestions, MergeSuggestion, getHistoricalTaskNames } from "@/lib/task-parser";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ParsedTasksDisplay } from "@/components/ParsedTasksDisplay";
 import { PlannedPanel } from "@/components/PlannedPanel";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar, Sparkles, Wand2, Undo2 } from "lucide-react";
+import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar, Sparkles, Wand2, Undo2, HelpCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   isGCalConfigured,
@@ -31,11 +33,12 @@ interface EntryFormProps {
 }
 
 export function EntryForm({ entry, date, project, previousTasks, yesterday, planData, onSave, onUpdateDuplicateVersions }: EntryFormProps) {
+  const { t } = useI18n();
   const [form, setForm] = useState<Entry>(entry || createEmptyEntry(date));
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [merging, setMerging] = useState(false);
-  const [polishing, setPolishing] = useState<string | null>(null);
+  const [polishing, setPolishing] = useState<Set<string>>(new Set());
   const [prePolishText, setPrePolishText] = useState<Record<string, string>>({});
   const [lastError, setLastError] = useState<string | null>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -115,6 +118,24 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
     };
   }, []);
 
+  // Flush pending save on tab close / navigation — beforeunload fires before React unmount
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+        const current = formRef.current;
+        if (current.done || current.doing || current.blockers) {
+          const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
+          const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
+          onSaveRef.current(prevProjectRef.current, { ...current, hours: totalHours });
+        }
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, []);
+
   const updateField = (key: "done" | "doing" | "blockers", value: string) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     triggerAutoSave();
@@ -149,9 +170,8 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
   const handleAIPolish = async (field: "done" | "doing") => {
     const text = form[field];
     if (!text.trim()) return;
-    // Save pre-polish text for undo
     setPrePolishText((prev) => ({ ...prev, [field]: text }));
-    setPolishing(field);
+    setPolishing((prev) => new Set(prev).add(field));
     try {
       const polished = await polishText(text);
       setForm((prev) => ({ ...prev, [field]: polished }));
@@ -161,7 +181,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
       setPrePolishText((prev) => { const n = { ...prev }; delete n[field]; return n; });
       toast.error(err instanceof Error ? err.message : "AI polish failed");
     } finally {
-      setPolishing(null);
+      setPolishing((prev) => { const n = new Set(prev); n.delete(field); return n; });
     }
   };
 
@@ -178,7 +198,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
     const text = form.blockers;
     if (!text.trim()) return;
     setPrePolishText((prev) => ({ ...prev, blockers: text }));
-    setPolishing("blockers");
+    setPolishing((prev) => new Set(prev).add("blockers"));
     try {
       const polished = await polishBlockers(text);
       setForm((prev) => ({ ...prev, blockers: polished }));
@@ -188,7 +208,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
       setPrePolishText((prev) => { const n = { ...prev }; delete n.blockers; return n; });
       toast.error(err instanceof Error ? err.message : "AI polish failed");
     } finally {
-      setPolishing(null);
+      setPolishing((prev) => { const n = new Set(prev); n.delete("blockers"); return n; });
     }
   };
 
@@ -261,9 +281,9 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
   };
 
   const fields = [
-    { key: "done" as const, label: "What I did", icon: CheckCircle2, color: "text-success", placeholder: "Fixed auth bug - 2h\nCode review - 1.5h\nStandup 30m" },
-    { key: "doing" as const, label: "What I'm doing next", icon: ListTodo, color: "text-primary", placeholder: "Deploy pipeline - 3h\nWrite tests - 2h" },
-    { key: "blockers" as const, label: "Blockers", icon: AlertTriangle, color: "text-warning", placeholder: "Waiting on API access..." },
+    { key: "done" as const, label: t("entry.whatIDid"), icon: CheckCircle2, color: "text-success", placeholder: "Fixed auth bug - 2h\nCode review - 1.5h\nStandup 30m" },
+    { key: "doing" as const, label: t("entry.whatImDoing"), icon: ListTodo, color: "text-primary", placeholder: "Deploy pipeline - 3h\nWrite tests - 2h" },
+    { key: "blockers" as const, label: t("entry.blockers"), icon: AlertTriangle, color: "text-warning", placeholder: "Waiting on API access..." },
   ];
 
   const SaveIndicator = () => {
@@ -271,7 +291,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
       return (
         <span className="flex items-center gap-1 text-xs text-muted-foreground animate-in fade-in">
           <Loader2 className="w-3 h-3 animate-spin" />
-          Saving…
+          {t("entry.saving")}
         </span>
       );
     }
@@ -279,17 +299,17 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
       return (
         <span className="flex items-center gap-1 text-xs text-success animate-in fade-in">
           <Check className="w-3 h-3" />
-          Saved ✓
+          {t("entry.saved")}
         </span>
       );
     }
     if (saveState === "error") {
       return (
         <span className="flex items-center gap-1 text-xs text-destructive animate-in fade-in">
-          Save failed
+          {t("entry.saveFailed")}
           <Button size="sm" variant="ghost" className="h-5 px-1.5 text-[10px] gap-0.5" onClick={handleRetry}>
             <RefreshCw className="w-3 h-3" />
-            Retry
+            {t("entry.retry")}
           </Button>
         </span>
       );
@@ -325,9 +345,18 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
               <SaveIndicator />
             </div>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Hours: <span className="font-mono bg-muted px-1 rounded">task - 2h</span> · Dual: <span className="font-mono bg-muted px-1 rounded">task - 1h/3h</span> <span className="text-[10px]">(actual/team)</span> · Also: <span className="font-mono bg-muted px-1 rounded">30m</span> <span className="font-mono bg-muted px-1 rounded">3ч</span>
-          </p>
+          <Popover>
+            <PopoverTrigger asChild>
+              <button className="text-muted-foreground hover:text-foreground transition-colors" title="Formatting help">
+                <HelpCircle className="w-3.5 h-3.5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="text-xs text-muted-foreground w-72" side="bottom" align="start">
+              <p>
+                Hours: <span className="font-mono bg-muted px-1 rounded">task - 2h</span> · Dual: <span className="font-mono bg-muted px-1 rounded">task - 1h/3h</span> <span className="text-xs">(actual/team)</span> · Also: <span className="font-mono bg-muted px-1 rounded">30m</span> <span className="font-mono bg-muted px-1 rounded">3ч</span>
+              </p>
+            </PopoverContent>
+          </Popover>
           {yesterday?.doing && (
             <Button
               size="sm"
@@ -369,12 +398,13 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
         <CardContent className="space-y-4">
           {/* Version input */}
           <div className="flex items-center gap-2">
-            <label className="text-xs text-muted-foreground shrink-0">Version:</label>
+            <label htmlFor="version-input" className="text-xs text-muted-foreground shrink-0">{t("entry.version")}</label>
             <input
+              id="version-input"
               value={form.version || ""}
               onChange={(e) => updateVersion(e.target.value)}
               placeholder="e.g. v2, sprint-3"
-              className="h-6 text-xs font-mono bg-muted/30 border border-border/50 rounded px-2 w-32 focus:outline-none focus:ring-1 focus:ring-primary/50"
+              className="h-7 text-base sm:text-xs font-mono bg-muted/30 border border-border/50 rounded px-2 w-32 focus:outline-none focus:ring-1 focus:ring-primary/50"
             />
             {form.version && onUpdateDuplicateVersions && (
               <Button
@@ -391,7 +421,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
                 }}
               >
                 <RefreshCw className="w-3 h-3" />
-                Update duplicates
+                {t("entry.updateDuplicates")}
               </Button>
             )}
           </div>
@@ -404,72 +434,72 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
                   {label}
                 </label>
                 {isAIConfigured() && key !== "blockers" && (
-                  <div className="flex items-center gap-0.5">
+                   <div className="flex items-center gap-1">
                     {prePolishText[key] && (
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-6 text-[10px] gap-1 text-warning px-1.5 min-w-[44px]"
+                        className="h-9 sm:h-7 text-xs gap-1 text-warning px-2 min-w-[44px]"
                         onClick={() => handleUndoPolish(key)}
                         title="Revert to original text"
                       >
-                        <Undo2 className="w-3 h-3" />
-                        Undo
+                        <Undo2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">{t("entry.undo")}</span>
                       </Button>
                     )}
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-6 text-[10px] gap-1 text-muted-foreground px-1.5 min-w-[44px]"
-                      disabled={polishing === key}
+                      className="h-9 sm:h-7 text-xs gap-1 text-muted-foreground px-2 min-w-[44px]"
+                      disabled={polishing.has(key)}
                       onClick={() => handleAIPolish(key)}
                       title="Rewrite shorthand into professional text"
                     >
-                      {polishing === key ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                      Polish
+                      {polishing.has(key) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                      <span className="hidden sm:inline">{t("entry.polish")}</span>
                     </Button>
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-6 text-[10px] gap-1 text-muted-foreground px-1.5 min-w-[44px]"
+                      className="h-9 sm:h-7 text-xs gap-1 text-muted-foreground px-2 min-w-[44px]"
                       disabled={merging}
                       onClick={() => handleAIMerge(key)}
                       title="Merge & deduplicate tasks with AI"
                     >
-                      {merging ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                      Merge
+                      {merging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                      <span className="hidden sm:inline">{t("entry.merge")}</span>
                     </Button>
                   </div>
                 )}
                 {isAIConfigured() && key === "blockers" && (
-                  <div className="flex items-center gap-0.5">
+                   <div className="flex items-center gap-1">
                     {prePolishText.blockers && (
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="h-6 text-[10px] gap-1 text-warning px-1.5 min-w-[44px]"
+                        className="h-9 sm:h-7 text-xs gap-1 text-warning px-2 min-w-[44px]"
                         onClick={() => handleUndoPolish("blockers")}
                         title="Revert to original text"
                       >
-                        <Undo2 className="w-3 h-3" />
-                        Undo
+                        <Undo2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">{t("entry.undo")}</span>
                       </Button>
                     )}
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="h-6 text-[10px] gap-1 text-muted-foreground px-1.5 min-w-[44px]"
-                      disabled={polishing === "blockers"}
+                      className="h-9 sm:h-7 text-xs gap-1 text-muted-foreground px-2 min-w-[44px]"
+                      disabled={polishing.has("blockers")}
                       onClick={handleBlockerPolish}
                       title="Polish blockers into professional language"
                     >
-                      {polishing === "blockers" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                      ✨ Polish
+                      {polishing.has("blockers") ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                      <span className="hidden sm:inline">✨ {t("entry.polish")}</span>
                     </Button>
                   </div>
                 )}
               </div>
-              {polishing === key ? (
+              {polishing.has(key) ? (
                 <div className="rounded-md border border-border/50 bg-muted/30 p-3 space-y-2 animate-pulse">
                   <div className="h-3 bg-muted rounded w-3/4" />
                   <div className="h-3 bg-muted rounded w-1/2" />
@@ -482,6 +512,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
                   onChange={(val) => updateField(key, val)}
                   placeholder={placeholder}
                   suggestions={key !== "blockers" ? historicalNames : undefined}
+                  disabled={merging || polishing.has(key)}
                   className="bg-muted/30 border-border/50 focus-within:bg-background transition-colors"
                 />
               )}

@@ -42,6 +42,14 @@ function pruneEntries(data: ScrumData): ScrumData {
 export function saveData(data: ScrumData): void {
   try {
     const toSave = pruneEntries(data);
+    const prunedCount = Object.keys(data.entries).reduce((sum, proj) => {
+      const before = Object.keys(data.entries[proj] || {}).length;
+      const after = Object.keys(toSave.entries[proj] || {}).length;
+      return sum + (before - after);
+    }, 0);
+    if (prunedCount > 0) {
+      console.warn(`[storage] Pruned ${prunedCount} old entries. Enable Supabase sync to preserve history.`);
+    }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
   } catch (err) {
     console.error("[storage] Failed to save data:", err);

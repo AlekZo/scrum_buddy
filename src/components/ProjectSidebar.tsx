@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Plus, X, Pencil, Check, FolderKanban } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -24,6 +25,7 @@ interface ProjectSidebarProps {
 }
 
 export function ProjectSidebar({ projects, activeProject, onSelect, onAdd, onRemove, onRename }: ProjectSidebarProps) {
+  const { t } = useI18n();
   const { state } = useSidebar();
   const collapsed = state === "collapsed";
   const [isAdding, setIsAdding] = useState(false);
@@ -55,7 +57,7 @@ export function ProjectSidebar({ projects, activeProject, onSelect, onAdd, onRem
       <SidebarContent>
         <SidebarGroup>
           <SidebarGroupLabel className="text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/60">
-            {!collapsed && "Projects"}
+            {!collapsed && t("sidebar.projects")}
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -141,10 +143,10 @@ export function ProjectSidebar({ projects, activeProject, onSelect, onAdd, onRem
                   <SidebarMenuButton
                     onClick={() => setIsAdding(true)}
                     className="text-sidebar-foreground/50 hover:text-sidebar-foreground min-h-[40px]"
-                    tooltip="Add project"
+                    tooltip={t("sidebar.addProject")}
                   >
                     <Plus className="w-4 h-4" />
-                    {!collapsed && <span>Add project</span>}
+                    {!collapsed && <span>{t("sidebar.addProject")}</span>}
                   </SidebarMenuButton>
                 )}
               </SidebarMenuItem>

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/button";
+import { useI18n, Locale } from "@/lib/i18n";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
@@ -60,6 +61,7 @@ interface SettingsModalProps {
 }
 
 export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsModalProps) {
+  const { t, locale, setLocale } = useI18n();
   const [open, setOpen] = useState(false);
 
   // Supabase state
@@ -226,31 +228,51 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Settings</DialogTitle>
+            <DialogTitle>{t("settings.title")}</DialogTitle>
             <DialogDescription>
-              Configure database sync, calendar, and Telegram integrations.
+              {t("settings.description")}
             </DialogDescription>
           </DialogHeader>
+
+          {/* Language Switcher */}
+          <div className="flex items-center justify-between py-2 px-1">
+            <Label className="text-xs font-medium">{t("settings.language")}</Label>
+            <div className="flex items-center gap-1 rounded-lg bg-muted p-0.5">
+              {(["en", "ru"] as Locale[]).map((lang) => (
+                <button
+                  key={lang}
+                  onClick={() => setLocale(lang)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                    locale === lang
+                      ? "bg-primary text-primary-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {lang === "en" ? "🇬🇧 English" : "🇷🇺 Русский"}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <Tabs defaultValue="database" className="mt-2">
             <TabsList className="w-full">
               <TabsTrigger value="database" className="flex-1 gap-1 text-xs">
-                <Unplug className="w-3.5 h-3.5" /> Database
+                <Unplug className="w-3.5 h-3.5" /> {t("settings.database")}
               </TabsTrigger>
               <TabsTrigger value="calendar" className="flex-1 gap-1 text-xs">
-                <Calendar className="w-3.5 h-3.5" /> Google Calendar
+                <Calendar className="w-3.5 h-3.5" /> {t("settings.googleCalendar")}
               </TabsTrigger>
               <TabsTrigger value="telegram" className="flex-1 gap-1 text-xs">
-                <Send className="w-3.5 h-3.5" /> Telegram
+                <Send className="w-3.5 h-3.5" /> {t("settings.telegram")}
               </TabsTrigger>
               <TabsTrigger value="ai" className="flex-1 gap-1 text-xs">
-                <Sparkles className="w-3.5 h-3.5" /> AI
+                <Sparkles className="w-3.5 h-3.5" /> {t("settings.ai")}
               </TabsTrigger>
               <TabsTrigger value="prompts" className="flex-1 gap-1 text-xs">
-                <FileText className="w-3.5 h-3.5" /> Prompts
+                <FileText className="w-3.5 h-3.5" /> {t("settings.prompts")}
               </TabsTrigger>
               <TabsTrigger value="danger" className="flex-1 gap-1 text-xs text-destructive">
-                <AlertTriangle className="w-3.5 h-3.5" /> Data
+                <AlertTriangle className="w-3.5 h-3.5" /> {t("settings.data")}
               </TabsTrigger>
             </TabsList>
 
@@ -281,11 +303,11 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
               <div className="flex gap-2">
                 {isSupabaseConnected && (
                   <Button variant="destructive" size="sm" onClick={handleDisconnectSupabase} className="gap-1">
-                    <Unplug className="w-3.5 h-3.5" /> Disconnect
+                    <Unplug className="w-3.5 h-3.5" /> {t("settings.disconnect")}
                   </Button>
                 )}
                 <div className="flex-1" />
-                <Button size="sm" onClick={handleSaveSupabase}>Save & Connect</Button>
+                <Button size="sm" onClick={handleSaveSupabase}>{t("settings.saveConnect")}</Button>
               </div>
             </TabsContent>
 

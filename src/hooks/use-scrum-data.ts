@@ -126,10 +126,12 @@ export function useScrumData() {
   );
 
   const addProject = useCallback((name: string) => {
-    setData((prev) => ({
-      ...prev,
-      projects: [...prev.projects, name],
-    }));
+    setData((prev) => {
+      if (prev.projects.some((p) => p.toLowerCase() === name.toLowerCase())) {
+        return prev; // Duplicate — no-op
+      }
+      return { ...prev, projects: [...prev.projects, name] };
+    });
   }, []);
 
   const removeProject = useCallback((name: string) => {
@@ -157,6 +159,10 @@ export function useScrumData() {
 
   const renameProject = useCallback((oldName: string, newName: string) => {
     setData((prev) => {
+      // Prevent renaming to an existing project name (case-insensitive)
+      if (prev.projects.some((p) => p !== oldName && p.toLowerCase() === newName.toLowerCase())) {
+        return prev; // Collision — no-op
+      }
       const { [oldName]: projectEntries, ...restEntries } = prev.entries;
       return {
         ...prev,
@@ -210,23 +216,32 @@ export function useScrumData() {
 
       let count = 0;
       setData((prev) => {
-        const next = structuredClone(prev);
-        for (const proj of next.projects) {
-          const entries = next.entries[proj];
+        // Targeted update: only clone entries that actually change
+        const nextEntries = { ...prev.entries };
+        let changed = false;
+        for (const proj of prev.projects) {
+          const entries = prev.entries[proj];
           if (!entries) continue;
-          for (const entry of Object.values(entries)) {
-            if (entry.id === sourceEntry.id) continue;
+          let projChanged = false;
+          const projEntries = { ...entries };
+          for (const [id, entry] of Object.entries(projEntries)) {
+            if (id === sourceEntry.id) continue;
             const entryLines = [...entry.done.split("\n"), ...entry.doing.split("\n")]
               .map((l) => l.trim().replace(/^[-•*]\s*/, "").toLowerCase())
               .filter(Boolean);
             const overlap = entryLines.filter((l) => sourceLines.has(l)).length;
             if (overlap > 0 && overlap >= entryLines.length * 0.5) {
-              entry.version = version;
+              projEntries[id] = { ...entry, version };
+              projChanged = true;
               count++;
             }
           }
+          if (projChanged) {
+            nextEntries[proj] = projEntries;
+            changed = true;
+          }
         }
-        return next;
+        return changed ? { ...prev, entries: nextEntries } : prev;
       });
       return count;
     },

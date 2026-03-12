@@ -12,6 +12,7 @@ import { parseTaskInput } from "@/lib/task-parser";
 import { createPlanTask, PlanTask, PlanTaskStatus } from "@/lib/plan-types";
 import { Package, Vault, CalendarDays, Plus, Zap } from "lucide-react";
 import { toast } from "sonner";
+import { useI18n } from "@/lib/i18n";
 
 interface CommandPaletteProps {
   projects: string[];
@@ -34,6 +35,7 @@ export function CommandPalette({
   onSaveTask,
   onSwitchProject,
 }: CommandPaletteProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState("");
 
@@ -101,7 +103,7 @@ export function CommandPalette({
   return (
     <CommandDialog open={open} onOpenChange={setOpen}>
       <CommandInput
-        placeholder="Add task, switch project, or buffer... (e.g. 'Add to Sfera: API docs - 4h')"
+        placeholder={t("command.placeholder")}
         value={value}
         onValueChange={setValue}
       />
@@ -127,24 +129,24 @@ export function CommandPalette({
 
         {/* Quick actions for typed text */}
         {value.trim() && (
-          <CommandGroup heading="Quick Actions">
+          <CommandGroup heading={t("command.quickActions")}>
             <CommandItem
               onSelect={() => handleQuickAdd(value, activeProject, "active")}
             >
               <Plus className="w-4 h-4 mr-2 text-primary" />
-              Add to {activeProject}
+              {t("command.addTo")} {activeProject}
             </CommandItem>
             <CommandItem
               onSelect={() => handleQuickAdd(value, activeProject, "backlog")}
             >
               <Package className="w-4 h-4 mr-2 text-muted-foreground" />
-              Add to backlog
+              {t("command.addToBacklog")}
             </CommandItem>
             <CommandItem
               onSelect={() => handleQuickAdd(value, activeProject, "buffered")}
             >
               <Vault className="w-4 h-4 mr-2 text-success" />
-              Bank it (buffer)
+              {t("command.bankIt")}
             </CommandItem>
           </CommandGroup>
         )}
@@ -152,7 +154,7 @@ export function CommandPalette({
         <CommandSeparator />
 
         {/* Switch project */}
-        <CommandGroup heading="Switch Project">
+        <CommandGroup heading={t("command.switchProject")}>
           {projects.map((proj) => (
             <CommandItem
               key={proj}

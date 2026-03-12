@@ -20,18 +20,26 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { SyncStatusIndicator } from "@/components/SyncStatusIndicator";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { ClipboardList } from "lucide-react";
-import { getYesterdayDate } from "@/lib/types";
+import { getYesterdayDate, getToday } from "@/lib/types";
 import { parseTasks } from "@/lib/task-parser";
 import { checkAndSendStandups, StandupDataProvider } from "@/lib/standup-scheduler";
 import { isTelegramConfigured } from "@/lib/telegram-service";
 import { toast } from "sonner";
 import { stripActualHours } from "@/lib/text-sanitizer";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { useI18n } from "@/lib/i18n";
 
 const Index = () => {
   const isMobile = useIsMobile();
+  const { t } = useI18n();
   const [showAddProject, setShowAddProject] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const headerRef = useRef<HTMLElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(57);
 
   const {
     data,
@@ -52,23 +60,17 @@ const Index = () => {
   } = useScrumData();
 
   const { planData, savePlanTask, removePlanTask, updatePlanTask } = usePlanData();
-
-  const handleCredentialsChange = useCallback(() => {
-    triggerSync();
-  }, [triggerSync]);
-
   const handleAddProject = useCallback((name: string) => {
     addProject(name);
     setShowAddProject(false);
+    setNewProjectName("");
   }, [addProject]);
 
-  // Empty state CTA handler
+  // Empty state CTA handler — opens dialog instead of native prompt()
   const handleEmptyStateAdd = useCallback(() => {
-    const name = prompt("Project name:");
-    if (name?.trim()) {
-      addProject(name.trim());
-    }
-  }, [addProject]);
+    setNewProjectName("");
+    setShowAddProject(true);
+  }, []);
 
   const yesterdayDate = getYesterdayDate(selectedDate);
   const yesterday = useMemo(
@@ -120,6 +122,13 @@ const Index = () => {
   const projectsRef = useRef(data.projects);
   projectsRef.current = data.projects;
 
+  // Reactive Telegram config key — incremented when settings change
+  const [telegramConfigVersion, setTelegramConfigVersion] = useState(0);
+  const handleCredentialsChange = useCallback(() => {
+    triggerSync();
+    setTelegramConfigVersion((v) => v + 1);
+  }, [triggerSync]);
+
   const initCheckRun = useRef(false);
   useEffect(() => {
     if (!isTelegramConfigured()) return;
@@ -128,19 +137,52 @@ const Index = () => {
       getStandupText: (p) => buildStandupTextRef.current(p),
     };
     const interval = setInterval(async () => {
-      const sent = await checkAndSendStandups(provider);
-      if (sent.length > 0) {
-        toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
+      try {
+        const sent = await checkAndSendStandups(provider);
+        if (sent.length > 0) {
+          toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
+        }
+      } catch (err) {
+        console.error("[standup-scheduler] Poll failed:", err);
       }
     }, 30_000);
     if (!initCheckRun.current) {
       initCheckRun.current = true;
-      checkAndSendStandups(provider).then((sent) => {
-        if (sent.length > 0) toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
-      });
+      checkAndSendStandups(provider)
+        .then((sent) => {
+          if (sent.length > 0) toast.success(`Auto-sent standup for: ${sent.join(", ")}`);
+        })
+        .catch((err) => console.error("[standup-scheduler] Initial check failed:", err));
     }
     return () => clearInterval(interval);
+  }, [telegramConfigVersion]);
+
+  // Dynamically measure header height for sticky tab offset
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setHeaderHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    setHeaderHeight(el.offsetHeight);
+    return () => ro.disconnect();
   }, []);
+
+  // Midnight rollover: auto-update selectedDate when user returns to the tab on a new day
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") {
+        const today = getToday();
+        if (selectedDate !== today) {
+          setSelectedDate(today);
+          toast.info(`Date rolled over to ${today}`, { duration: 3000 });
+        }
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [selectedDate, setSelectedDate]);
 
   const hasProjects = data.projects.length > 0;
 
@@ -156,14 +198,14 @@ const Index = () => {
         />
       )}
       {/* Header */}
-      <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm sticky top-0 z-10">
+      <header className="border-b border-border/50 bg-card/50 backdrop-blur-sm sticky top-0 z-10" ref={headerRef}>
         <div className="px-3 sm:px-6 py-2 sm:py-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0">
               {/* Desktop: sidebar trigger */}
               {!isMobile && hasProjects && <SidebarTrigger className="shrink-0" />}
               <ClipboardList className="w-5 h-5 text-primary shrink-0 hidden sm:block" />
-              <h1 className="text-sm sm:text-lg font-bold tracking-tight truncate">Scrum Logger</h1>
+              <h1 className="text-sm sm:text-lg font-bold tracking-tight truncate">{t("app.title")}</h1>
               <SyncStatusIndicator />
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
@@ -193,18 +235,18 @@ const Index = () => {
           <EmptyState onAddProject={handleEmptyStateAdd} />
         ) : !activeProject ? (
           <div className="text-center py-20 text-muted-foreground">
-            <p>Select a project from the sidebar.</p>
+            <p>{t("common.selectProject")}</p>
           </div>
         ) : (
           <Tabs defaultValue="log" className="space-y-0">
             {/* Sticky view tabs — uses CSS sticky, no hardcoded offset */}
-            <div className="sticky top-[49px] sm:top-[57px] z-[9] bg-background/95 backdrop-blur-sm py-3 border-b border-border/30">
-              <TabsList className="w-full sm:w-auto">
-                <TabsTrigger value="log" className="flex-1 sm:flex-none min-h-[36px]">Log</TabsTrigger>
-                <TabsTrigger value="planning" className="flex-1 sm:flex-none min-h-[36px]">Planning</TabsTrigger>
-                <TabsTrigger value="standup" className="flex-1 sm:flex-none min-h-[36px]">Standup</TabsTrigger>
-                <TabsTrigger value="timesheet" className="flex-1 sm:flex-none min-h-[36px]">Timesheet</TabsTrigger>
-                <TabsTrigger value="insights" className="flex-1 sm:flex-none min-h-[36px]">AI Insights</TabsTrigger>
+            <div className="sticky z-[9] bg-background/95 backdrop-blur-sm py-3 border-b border-border/30" style={{ top: headerHeight }}>
+              <TabsList className="w-full sm:w-auto overflow-x-auto overflow-y-hidden justify-start sm:justify-center no-scrollbar">
+                <TabsTrigger value="log" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.log")}</TabsTrigger>
+                <TabsTrigger value="planning" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.planning")}</TabsTrigger>
+                <TabsTrigger value="standup" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.standup")}</TabsTrigger>
+                <TabsTrigger value="timesheet" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.timesheet")}</TabsTrigger>
+                <TabsTrigger value="insights" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.insights")}</TabsTrigger>
               </TabsList>
             </div>
 
@@ -262,17 +304,52 @@ const Index = () => {
           </Tabs>
         )}
       </main>
+
+      {/* Add Project Dialog (replaces native prompt) */}
+      <Dialog open={showAddProject} onOpenChange={setShowAddProject}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("sidebar.addProject")}</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={newProjectName}
+            onChange={(e) => setNewProjectName(e.target.value)}
+            placeholder={t("sidebar.addProject")}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newProjectName.trim()) {
+                handleAddProject(newProjectName.trim());
+              }
+            }}
+            autoFocus
+            className="text-base sm:text-sm"
+          />
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowAddProject(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => newProjectName.trim() && handleAddProject(newProjectName.trim())}
+              disabled={!newProjectName.trim()}
+            >
+              {t("settings.save")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 
   // Desktop: sidebar layout. Mobile: no sidebar (uses dropdown).
   if (isMobile || !hasProjects) {
-    return <div className="min-h-screen bg-background">{mainContent}</div>;
+    return <div className="min-h-[100dvh] bg-background pb-[env(safe-area-inset-bottom)]">{mainContent}</div>;
   }
 
   return (
     <SidebarProvider>
-      <div className="min-h-screen flex w-full bg-background">
+      <div className="min-h-[100dvh] flex w-full bg-background">
         <ProjectSidebar
           projects={data.projects}
           activeProject={activeProject}
