@@ -4,8 +4,17 @@ export interface Entry {
   done: string;
   doing: string;
   blockers: string;
-  hours: number; // auto-computed from parsed tasks
+  hours: number; // auto-computed from parsed tasks (backward compat, = actualHours)
+  /** Cached actual hours (computed on save) */
+  actualHours?: number;
+  /** Cached team hours (computed on save) */
+  teamHours?: number;
+  /** Count of done tasks (cached on save) */
+  doneTaskCount?: number;
+  /** Count of doing tasks (cached on save) */
+  doingTaskCount?: number;
   version?: string; // user-defined version label (e.g. "v2", "sprint-3")
+  reported?: boolean; // whether this entry has been reported to team (freezes fields)
 }
 
 export interface ParsedTask {

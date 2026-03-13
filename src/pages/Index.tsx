@@ -1,6 +1,7 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useScrumData } from "@/hooks/use-scrum-data";
 import { usePlanData } from "@/hooks/use-plan-data";
+import { usePromises } from "@/hooks/use-promises";
 import { ProjectSidebar } from "@/components/ProjectSidebar";
 import { ProjectDropdown } from "@/components/ProjectDropdown";
 import { EmptyState } from "@/components/EmptyState";
@@ -13,6 +14,7 @@ import { RecentEntries } from "@/components/RecentEntries";
 import { CalendarLogView } from "@/components/CalendarLogView";
 import { YesterdayPanel } from "@/components/YesterdayPanel";
 import { PlanningView } from "@/components/PlanningView";
+import { PromiseInput } from "@/components/PromiseInput";
 import { CommandPalette } from "@/components/CommandPalette";
 import { WeeklyRetro } from "@/components/WeeklyRetro";
 import { SettingsModal } from "@/components/SettingsModal";
@@ -60,6 +62,7 @@ const Index = () => {
   } = useScrumData();
 
   const { planData, savePlanTask, removePlanTask, updatePlanTask } = usePlanData();
+  const { activePromises, completedPromises, addPromise, completePromise, uncompletePromise, updatePromise, updatePromiseDeadline, removePromise, getPromisesForDate } = usePromises();
   const handleAddProject = useCallback((name: string) => {
     addProject(name);
     setShowAddProject(false);
@@ -244,6 +247,7 @@ const Index = () => {
               <TabsList className="w-full sm:w-auto overflow-x-auto overflow-y-hidden justify-start sm:justify-center no-scrollbar">
                 <TabsTrigger value="log" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.log")}</TabsTrigger>
                 <TabsTrigger value="planning" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.planning")}</TabsTrigger>
+                <TabsTrigger value="promises" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.promises")}</TabsTrigger>
                 <TabsTrigger value="standup" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.standup")}</TabsTrigger>
                 <TabsTrigger value="timesheet" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.timesheet")}</TabsTrigger>
                 <TabsTrigger value="insights" className="flex-1 sm:flex-none min-h-[44px] sm:min-h-[36px] text-xs sm:text-sm">{t("nav.insights")}</TabsTrigger>
@@ -252,7 +256,7 @@ const Index = () => {
 
             <TabsContent value="log" className="mt-4">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div className="lg:col-span-2">
+                <div className="lg:col-span-2 space-y-4">
                   <EntryForm
                     entry={currentEntry}
                     date={selectedDate}
@@ -263,12 +267,35 @@ const Index = () => {
                     onSave={saveEntry}
                     onUpdateDuplicateVersions={updateDuplicateVersions}
                   />
+                  <PromiseInput
+                    activePromises={activePromises}
+                    completedPromises={completedPromises}
+                    onAdd={addPromise}
+                    onComplete={completePromise}
+                    onUncomplete={uncompletePromise}
+                    onUpdate={updatePromise}
+                    onUpdateDeadline={updatePromiseDeadline}
+                    onRemove={removePromise}
+                    project={activeProject}
+                  />
                 </div>
                 <div className="space-y-4">
                   <CalendarLogView
                     entries={entries}
                     selectedDate={selectedDate}
                     onSelectDate={setSelectedDate}
+                    getPromisesForDate={getPromisesForDate}
+                  />
+                  <PromiseInput
+                    activePromises={activePromises}
+                    completedPromises={completedPromises}
+                    onAdd={addPromise}
+                    onComplete={completePromise}
+                    onUncomplete={uncompletePromise}
+                    onUpdate={updatePromise}
+                    onUpdateDeadline={updatePromiseDeadline}
+                    onRemove={removePromise}
+                    project={activeProject}
                   />
                   <YesterdayPanel entry={yesterday} date={yesterdayDate} />
                 </div>
@@ -300,6 +327,22 @@ const Index = () => {
 
             <TabsContent value="insights" className="mt-4">
               <WeeklyRetro entries={entries} project={activeProject} selectedDate={selectedDate} />
+            </TabsContent>
+
+            <TabsContent value="promises" className="mt-4">
+              <div className="max-w-2xl mx-auto">
+                <PromiseInput
+                  activePromises={activePromises}
+                  completedPromises={completedPromises}
+                  onAdd={addPromise}
+                  onComplete={completePromise}
+                  onUncomplete={uncompletePromise}
+                  onUpdate={updatePromise}
+                  onUpdateDeadline={updatePromiseDeadline}
+                  onRemove={removePromise}
+                  project={activeProject}
+                />
+              </div>
             </TabsContent>
           </Tabs>
         )}

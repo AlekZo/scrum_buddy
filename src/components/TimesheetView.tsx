@@ -1,12 +1,13 @@
 import { useState, useMemo } from "react";
 import { useI18n } from "@/lib/i18n";
-import { Entry } from "@/lib/types";
-import { PlanData, getPlannedTasksForDate, getWeekStart, getWeekDays } from "@/lib/plan-types";
+import { Entry, formatDate } from "@/lib/types";
+import { PlanData, getPlannedTasksForDate } from "@/lib/plan-types";
 import { parseTasks } from "@/lib/task-parser";
 import { BufferBankWidget } from "@/components/BufferBankWidget";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { BulletTextarea } from "@/components/BulletTextarea";
 import {
   Table,
@@ -23,7 +24,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { BarChart3, Pencil, Check, X, Copy } from "lucide-react";
+import { BarChart3, Pencil, Check, X, Copy, Users, Clock } from "lucide-react";
 import { toast } from "sonner";
 
 interface TimesheetViewProps {
@@ -34,6 +35,8 @@ interface TimesheetViewProps {
 }
 
 const DAILY_TARGET = 8;
+
+type FilterPreset = "thisWeek" | "lastWeek" | "thisMonth" | "last30" | "all" | "custom";
 
 function TruncatedCell({ text, maxWidth = "250px" }: { text: string; maxWidth?: string }) {
   if (!text) return <span className="text-xs text-muted-foreground italic">—</span>;
@@ -70,25 +73,67 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
   const [editDone, setEditDone] = useState("");
   const [editDoing, setEditDoing] = useState("");
   const [editBlockers, setEditBlockers] = useState("");
+  const [filterPreset, setFilterPreset] = useState<FilterPreset>("last30");
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
+
+  // Compute filter date range
+  const dateRange = useMemo(() => {
+    const now = new Date();
+    const today = formatDate(now);
+    switch (filterPreset) {
+      case "thisWeek": {
+        const d = new Date(now);
+        const day = d.getDay();
+        const diff = day === 0 ? 6 : day - 1; // Monday-based
+        d.setDate(d.getDate() - diff);
+        return { from: formatDate(d), to: today };
+      }
+      case "lastWeek": {
+        const d = new Date(now);
+        const day = d.getDay();
+        const diff = day === 0 ? 6 : day - 1;
+        d.setDate(d.getDate() - diff - 7);
+        const from = formatDate(d);
+        d.setDate(d.getDate() + 6);
+        return { from, to: formatDate(d) };
+      }
+      case "thisMonth": {
+        const from = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+        return { from, to: today };
+      }
+      case "last30": {
+        const d = new Date(now);
+        d.setDate(d.getDate() - 30);
+        return { from: formatDate(d), to: today };
+      }
+      case "custom":
+        return { from: customFrom || "2000-01-01", to: customTo || today };
+      case "all":
+      default:
+        return { from: "2000-01-01", to: today };
+    }
+  }, [filterPreset, customFrom, customTo]);
+
+  const filteredEntries = useMemo(() => {
+    return entries.filter((e) => e.date >= dateRange.from && e.date <= dateRange.to);
+  }, [entries, dateRange]);
 
   const rows = useMemo(() => {
-    return entries.slice(0, 14).map((entry) => {
+    return filteredEntries.map((entry) => {
       const doneTasks = parseTasks(entry.done, "done");
       const totalHours = doneTasks.reduce((sum, t) => sum + t.hours, 0);
-      // Logged dual hours from "What I did" text
       const loggedTeamHours = doneTasks.reduce((sum, t) => sum + t.teamHours, 0);
       const loggedActualHours = doneTasks.reduce((sum, t) => sum + t.actualHours, 0);
-      // Planned hours from Planning tab
       const planned = getPlannedTasksForDate(planData, project, entry.date);
       const plannedTeamHours = planned.reduce((sum, t) => sum + t.teamHours, 0);
       const plannedActualHours = planned.reduce((sum, t) => sum + t.actualHours, 0);
-      // Use logged dual hours if available (any task has different actual vs team), else fall back to planned
       const hasDualLogged = doneTasks.some(t => t.actualHours !== t.teamHours);
       const teamHours = hasDualLogged ? loggedTeamHours : (plannedTeamHours || loggedTeamHours);
       const actualHours = hasDualLogged ? loggedActualHours : (plannedActualHours || loggedActualHours);
       return { entry, doneTasks, totalHours, teamHours, actualHours };
     });
-  }, [entries, planData, project]);
+  }, [filteredEntries, planData, project]);
 
   // Aggregate hours by task name across all visible days
   const taskAggregation = useMemo(() => {
@@ -185,26 +230,102 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
     return "bg-destructive/10";
   };
 
-  // Calculate date range for buffer bank
-  const dateRange = useMemo(() => {
+  // Compute date range for buffer bank from filtered entries
+  const bufferRange = useMemo(() => {
     if (rows.length === 0) return { from: "", to: "" };
     const dates = rows.map(r => r.entry.date).sort();
     return { from: dates[0], to: dates[dates.length - 1] };
   }, [rows]);
 
+  // Grand totals for team/actual
+  const grandTeam = rows.reduce((s, r) => s + r.teamHours, 0);
+  const grandActual = rows.reduce((s, r) => s + r.actualHours, 0);
+  const hasDualTotals = grandTeam !== grandActual && grandActual > 0;
+
+  const presets: { key: FilterPreset; label: string }[] = [
+    { key: "thisWeek", label: t("timesheet.thisWeek") },
+    { key: "lastWeek", label: t("timesheet.lastWeek") },
+    { key: "thisMonth", label: t("timesheet.thisMonth") },
+    { key: "last30", label: t("timesheet.last30") },
+    { key: "all", label: t("timesheet.all") },
+    { key: "custom", label: t("timesheet.custom") },
+  ];
+
   return (
     <TooltipProvider delayDuration={200}>
       <div className="space-y-4">
         {/* Buffer Bank */}
-        {dateRange.from && (
+        {bufferRange.from && (
           <BufferBankWidget
             planData={planData}
             project={project}
-            from={dateRange.from}
-            to={dateRange.to}
+            from={bufferRange.from}
+            to={bufferRange.to}
             entries={entries}
           />
         )}
+
+        {/* Filter bar */}
+        <Card className="border-border/50">
+          <CardContent className="py-3 px-4">
+            <div className="flex flex-wrap items-center gap-2">
+              {presets.map((p) => (
+                <Button
+                  key={p.key}
+                  size="sm"
+                  variant={filterPreset === p.key ? "default" : "outline"}
+                  className="h-7 text-xs"
+                  onClick={() => setFilterPreset(p.key)}
+                >
+                  {p.label}
+                </Button>
+              ))}
+              {filterPreset === "custom" && (
+                <div className="flex items-center gap-1.5 ml-2">
+                  <Input
+                    type="date"
+                    value={customFrom}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="h-7 text-xs w-32"
+                  />
+                  <span className="text-xs text-muted-foreground">→</span>
+                  <Input
+                    type="date"
+                    value={customTo}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="h-7 text-xs w-32"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Team vs Actual visual bar */}
+            {hasDualTotals && (
+              <div className="mt-3 space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {t("timesheet.actual")}: <span className="font-mono font-semibold text-foreground">{grandActual.toFixed(1)}h</span></span>
+                  <span className="flex items-center gap-1"><Users className="w-3 h-3" /> {t("timesheet.team")}: <span className="font-mono font-semibold text-foreground">{grandTeam.toFixed(1)}h</span></span>
+                </div>
+                <div className="w-full h-3 bg-muted rounded-full overflow-hidden flex">
+                  <div
+                    className="h-full bg-primary/70 rounded-l-full transition-all"
+                    style={{ width: `${(grandActual / (grandTeam || 1)) * 100}%` }}
+                    title={`Actual: ${grandActual.toFixed(1)}h`}
+                  />
+                  <div
+                    className="h-full bg-accent/50 rounded-r-full transition-all"
+                    style={{ width: `${Math.max(0, 100 - (grandActual / (grandTeam || 1)) * 100)}%` }}
+                    title={`Buffer: ${(grandTeam - grandActual).toFixed(1)}h`}
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground text-center">
+                  {t("timesheet.teamVsActual")} · Buffer: {(grandTeam - grandActual).toFixed(1)}h ({grandTeam > 0 ? (((grandTeam - grandActual) / grandTeam) * 100).toFixed(0) : 0}%)
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Summary row */}
         <Card className="border-border/50">
           <CardHeader className="pb-3">
@@ -240,7 +361,7 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
                 <Copy className="w-4 h-4" /> {t("common.copy")}
               </Button>
             </div>
-            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+            <div className="flex items-center gap-4 text-sm text-muted-foreground flex-wrap">
               <span>{rows.length} {t("timesheet.entries")} ({calendarWorkdays} {t("timesheet.workdays")})</span>
               <span>{t("timesheet.target")}: <span className="font-mono font-semibold text-foreground">{DAILY_TARGET}h/day</span></span>
               <span>{t("timesheet.logged")}: <span className={`font-mono font-semibold ${utilColor(grandTotal / (rows.length || 1))}`}>{grandTotal.toFixed(1)}h</span></span>
@@ -262,8 +383,13 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
                 <TableHeader>
                   <TableRow className="hover:bg-transparent border-border/50">
                      <TableHead className="w-24 text-[11px] font-semibold uppercase tracking-wider">Date</TableHead>
-                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider">What I Did</TableHead>
-                     <TableHead className="text-[11px] font-semibold uppercase tracking-wider">Doing Next</TableHead>
+                     <TableHead colSpan={2} className="text-[11px] font-semibold uppercase tracking-wider">
+                       <div className="flex items-center gap-3">
+                         <span className="flex items-center gap-1"><span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" /> Done</span>
+                         <span className="flex items-center gap-1"><span className="inline-block w-1.5 h-1.5 rounded-full bg-primary" /> Doing</span>
+                         <span className="flex items-center gap-1"><span className="inline-block w-1.5 h-1.5 rounded-full bg-destructive" /> Blockers</span>
+                       </div>
+                     </TableHead>
                      <TableHead className="w-20 text-[11px] font-semibold uppercase tracking-wider text-right">Logged</TableHead>
                      <TableHead className="w-16 text-[11px] font-semibold uppercase tracking-wider text-right">Team</TableHead>
                      <TableHead className="w-16 text-[11px] font-semibold uppercase tracking-wider text-right">Actual</TableHead>
@@ -343,46 +469,74 @@ export function TimesheetView({ entries, project, onSave, planData }: TimesheetV
                       );
                     }
 
-                    return (
+                    const doneLines = row.entry.done ? row.entry.done.split("\n").filter(l => l.trim()).map(l => l.trim().replace(/^[-•*]\s*/, "")) : [];
+                    const doingLines = row.entry.doing ? row.entry.doing.split("\n").filter(l => l.trim()).map(l => l.trim().replace(/^[-•*]\s*/, "")) : [];
+                    const blockerLines = row.entry.blockers ? row.entry.blockers.split("\n").filter(l => l.trim()).map(l => l.trim().replace(/^[-•*]\s*/, "")) : [];
+                    const allLines = [
+                      ...doneLines.map(l => ({ text: l, type: "done" as const })),
+                      ...doingLines.map(l => ({ text: l, type: "doing" as const })),
+                      ...blockerLines.map(l => ({ text: l, type: "blocker" as const })),
+                    ];
+                    // Show at least 1 row even if empty
+                    const displayLines = allLines.length > 0 ? allLines : [{ text: "", type: "done" as const }];
+
+                    return displayLines.map((line, lineIdx) => (
                       <TableRow
-                        key={row.entry.date}
-                        className="group cursor-pointer border-border/50 hover:bg-muted/30"
+                        key={`${row.entry.date}-${lineIdx}`}
+                        className={`group cursor-pointer hover:bg-muted/30 ${
+                          lineIdx === 0 ? "border-border/50" : "border-none"
+                        }`}
                         onClick={() => startEdit(row.entry)}
                       >
-                        <TableCell className="py-2 font-mono text-xs">
-                          <span className="font-semibold">{weekday}</span>{" "}
-                          <span className="text-muted-foreground">{display}</span>
+                        {/* Date — only on first row, rowSpan */}
+                        {lineIdx === 0 && (
+                          <TableCell className="py-1.5 font-mono text-xs align-top" rowSpan={displayLines.length}>
+                            <span className="font-semibold">{weekday}</span>{" "}
+                            <span className="text-muted-foreground">{display}</span>
+                          </TableCell>
+                        )}
+                        {/* Task line with type badge */}
+                        <TableCell className="py-1 px-2" colSpan={2}>
+                          {line.text ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                line.type === "done" ? "bg-emerald-500" : line.type === "doing" ? "bg-primary" : "bg-destructive"
+                              }`} />
+                              <span className="text-xs font-mono truncate">{line.text}</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-muted-foreground italic">—</span>
+                          )}
                         </TableCell>
-                        <TableCell className="py-2">
-                          <TruncatedCell text={row.entry.done} />
-                        </TableCell>
-                        <TableCell className="py-2">
-                          <TruncatedCell text={row.entry.doing} maxWidth="200px" />
-                        </TableCell>
-                        <TableCell className="py-2 text-right">
-                          <span className={`font-mono text-sm font-semibold ${utilColor(row.totalHours)}`}>
-                            {row.totalHours > 0 ? `${row.totalHours.toFixed(1)}h` : "—"}
-                          </span>
-                        </TableCell>
-                        <TableCell className="py-2 text-right font-mono text-xs text-muted-foreground">
-                          {row.teamHours > 0 ? `${row.teamHours.toFixed(1)}h` : "—"}
-                        </TableCell>
-                        <TableCell className="py-2 text-right font-mono text-xs text-muted-foreground">
-                          {row.actualHours > 0 ? `${row.actualHours.toFixed(1)}h` : "—"}
-                        </TableCell>
-                        <TableCell className="py-2 text-right font-mono text-xs text-muted-foreground">
-                          {DAILY_TARGET}h
-                        </TableCell>
-                        <TableCell className="py-2 text-right">
-                          <span className={`inline-flex items-center justify-center w-12 rounded-sm px-1 py-0.5 text-[10px] font-mono font-semibold ${utilBg(row.totalHours)} ${utilColor(row.totalHours)}`}>
-                            {util.toFixed(0)}%
-                          </span>
-                        </TableCell>
-                        <TableCell className="py-2">
-                          <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
-                        </TableCell>
+                        {/* Metrics — only on first row */}
+                        {lineIdx === 0 && (
+                          <>
+                            <TableCell className="py-1.5 text-right align-top" rowSpan={displayLines.length}>
+                              <span className={`font-mono text-sm font-semibold ${utilColor(row.totalHours)}`}>
+                                {row.totalHours > 0 ? `${row.totalHours.toFixed(1)}h` : "—"}
+                              </span>
+                            </TableCell>
+                            <TableCell className="py-1.5 text-right font-mono text-xs text-muted-foreground align-top" rowSpan={displayLines.length}>
+                              {row.teamHours > 0 ? `${row.teamHours.toFixed(1)}h` : "—"}
+                            </TableCell>
+                            <TableCell className="py-1.5 text-right font-mono text-xs text-muted-foreground align-top" rowSpan={displayLines.length}>
+                              {row.actualHours > 0 ? `${row.actualHours.toFixed(1)}h` : "—"}
+                            </TableCell>
+                            <TableCell className="py-1.5 text-right font-mono text-xs text-muted-foreground align-top" rowSpan={displayLines.length}>
+                              {DAILY_TARGET}h
+                            </TableCell>
+                            <TableCell className="py-1.5 text-right align-top" rowSpan={displayLines.length}>
+                              <span className={`inline-flex items-center justify-center w-12 rounded-sm px-1 py-0.5 text-[10px] font-mono font-semibold ${utilBg(row.totalHours)} ${utilColor(row.totalHours)}`}>
+                                {util.toFixed(0)}%
+                              </span>
+                            </TableCell>
+                            <TableCell className="py-1.5 align-top" rowSpan={displayLines.length}>
+                              <Pencil className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                            </TableCell>
+                          </>
+                        )}
                       </TableRow>
-                    );
+                    ));
                   })}
                 </TableBody>
                 <TableFooter>

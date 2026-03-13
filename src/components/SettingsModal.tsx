@@ -14,7 +14,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Unplug, Calendar, Plus, Trash2, UserCircle, Send, Sparkles, AlertTriangle, Clock, FileText, RotateCcw } from "lucide-react";
+import { Settings, Unplug, Calendar, Plus, Trash2, UserCircle, Send, Sparkles, AlertTriangle, Clock, FileText, RotateCcw, Download } from "lucide-react";
 import {
   getAISettings,
   saveAISettings,
@@ -226,7 +226,7 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t("settings.title")}</DialogTitle>
             <DialogDescription>
@@ -255,23 +255,23 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
           </div>
 
           <Tabs defaultValue="database" className="mt-2">
-            <TabsList className="w-full">
-              <TabsTrigger value="database" className="flex-1 gap-1 text-xs">
+            <TabsList className="w-full overflow-x-auto overflow-y-hidden justify-start no-scrollbar h-auto flex-wrap gap-1 p-1">
+              <TabsTrigger value="database" className="gap-1.5 text-xs px-3 py-1.5">
                 <Unplug className="w-3.5 h-3.5" /> {t("settings.database")}
               </TabsTrigger>
-              <TabsTrigger value="calendar" className="flex-1 gap-1 text-xs">
+              <TabsTrigger value="calendar" className="gap-1.5 text-xs px-3 py-1.5">
                 <Calendar className="w-3.5 h-3.5" /> {t("settings.googleCalendar")}
               </TabsTrigger>
-              <TabsTrigger value="telegram" className="flex-1 gap-1 text-xs">
+              <TabsTrigger value="telegram" className="gap-1.5 text-xs px-3 py-1.5">
                 <Send className="w-3.5 h-3.5" /> {t("settings.telegram")}
               </TabsTrigger>
-              <TabsTrigger value="ai" className="flex-1 gap-1 text-xs">
+              <TabsTrigger value="ai" className="gap-1.5 text-xs px-3 py-1.5">
                 <Sparkles className="w-3.5 h-3.5" /> {t("settings.ai")}
               </TabsTrigger>
-              <TabsTrigger value="prompts" className="flex-1 gap-1 text-xs">
+              <TabsTrigger value="prompts" className="gap-1.5 text-xs px-3 py-1.5">
                 <FileText className="w-3.5 h-3.5" /> {t("settings.prompts")}
               </TabsTrigger>
-              <TabsTrigger value="danger" className="flex-1 gap-1 text-xs text-destructive">
+              <TabsTrigger value="danger" className="gap-1.5 text-xs px-3 py-1.5 text-destructive">
                 <AlertTriangle className="w-3.5 h-3.5" /> {t("settings.data")}
               </TabsTrigger>
             </TabsList>
@@ -734,6 +734,51 @@ export function SettingsModal({ onCredentialsChange, projects = [] }: SettingsMo
 
 
             <TabsContent value="danger" className="space-y-4 mt-4">
+              {/* Export All Data */}
+              <div className="rounded-md border border-border/50 p-4 space-y-3">
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <Download className="w-4 h-4 text-primary" /> {t("settings.exportAll")}
+                </h4>
+                <p className="text-xs text-muted-foreground">
+                  {t("settings.exportAllDesc")}
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1"
+                  onClick={() => {
+                    try {
+                      const allData: Record<string, unknown> = {};
+                      for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (key) {
+                          try {
+                            allData[key] = JSON.parse(localStorage.getItem(key) || "null");
+                          } catch {
+                            allData[key] = localStorage.getItem(key);
+                          }
+                        }
+                      }
+                      const now = new Date();
+                      const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                      const blob = new Blob([JSON.stringify(allData, null, 2)], { type: "application/json" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `scrum_buddy_export_${ts}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      toast.success("Data exported successfully");
+                    } catch (err) {
+                      toast.error("Export failed");
+                      console.error(err);
+                    }
+                  }}
+                >
+                  <Download className="w-3.5 h-3.5" /> {t("settings.exportAll")}
+                </Button>
+              </div>
+
               <div className="rounded-md border border-destructive/50 p-4 space-y-3">
                 <h4 className="text-sm font-semibold text-destructive flex items-center gap-1.5">
                   <AlertTriangle className="w-4 h-4" /> Danger Zone

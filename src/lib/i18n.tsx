@@ -12,6 +12,7 @@ const translations = {
   "nav.standup": { en: "Standup", ru: "Стендап" },
   "nav.timesheet": { en: "Timesheet", ru: "Табель" },
   "nav.insights": { en: "AI Insights", ru: "AI Аналитика" },
+  "nav.promises": { en: "Promises", ru: "Обещания" },
 
   // Sidebar
   "sidebar.projects": { en: "PROJECTS", ru: "ПРОЕКТЫ" },
@@ -33,6 +34,8 @@ const translations = {
   "entry.polish": { en: "Polish", ru: "Улучшить" },
   "entry.merge": { en: "Merge", ru: "Объединить" },
   "entry.undo": { en: "Undo", ru: "Отменить" },
+  "entry.reported": { en: "Reported to team", ru: "Сообщено команде" },
+  "entry.unlock": { en: "Unlock to edit", ru: "Разблокировать" },
 
   // Planning
   "planning.title": { en: "Planning", ru: "Планирование" },
@@ -68,6 +71,13 @@ const translations = {
   "timesheet.team": { en: "Team", ru: "Команда" },
   "timesheet.actual": { en: "Actual", ru: "Факт" },
   "timesheet.taskBreakdown": { en: "Task Breakdown", ru: "Разбивка задач" },
+  "timesheet.thisWeek": { en: "This Week", ru: "Эта неделя" },
+  "timesheet.lastWeek": { en: "Last Week", ru: "Прошлая неделя" },
+  "timesheet.thisMonth": { en: "This Month", ru: "Этот месяц" },
+  "timesheet.last30": { en: "Last 30 Days", ru: "30 дней" },
+  "timesheet.custom": { en: "Custom", ru: "Другой" },
+  "timesheet.all": { en: "All", ru: "Все" },
+  "timesheet.teamVsActual": { en: "Team vs Actual", ru: "Команда / Факт" },
 
   // Calendar
   "calendar.title": { en: "Calendar", ru: "Календарь" },
@@ -75,10 +85,22 @@ const translations = {
   "calendar.logged": { en: "Logged", ru: "Записано" },
   "calendar.missing": { en: "Missing", ru: "Пусто" },
   "calendar.blocker": { en: "Blocker", ru: "Блокер" },
+  "calendar.actual": { en: "Actual", ru: "Факт" },
+  "calendar.team": { en: "Team", ru: "Команда" },
+  "calendar.promise": { en: "Promise", ru: "Обещание" },
 
   // Yesterday Panel
   "yesterday.title": { en: "Yesterday", ru: "Вчера" },
   "yesterday.noEntry": { en: "No entry for this date", ru: "Нет записи за эту дату" },
+
+  // Promises
+  "promise.title": { en: "Promises", ru: "Обещания" },
+  "promise.placeholder": { en: "Promise... (e.g. deploy by Friday)", ru: "Обещание... (напр. деплой к пятнице)" },
+  "promise.today": { en: "Today", ru: "Сегодня" },
+  "promise.tomorrow": { en: "Tomorrow", ru: "Завтра" },
+  "promise.overdue": { en: "overdue", ru: "просрочено" },
+  "promise.due": { en: "Due", ru: "Срок" },
+  "promise.done": { en: "Done", ru: "Выполнено" },
 
   // Settings
   "settings.title": { en: "Settings", ru: "Настройки" },
@@ -101,6 +123,8 @@ const translations = {
   "settings.resetDefaults": { en: "Reset to Defaults", ru: "Сбросить по умолчанию" },
   "settings.savePrompts": { en: "Save Prompts", ru: "Сохранить промпты" },
   "settings.standupSchedule": { en: "Standup Schedule", ru: "Расписание стендапов" },
+  "settings.exportAll": { en: "Export All Data", ru: "Экспорт всех данных" },
+  "settings.exportAllDesc": { en: "Download all your data as a JSON backup file.", ru: "Скачать все данные как JSON-файл." },
 
   // Empty State
   "empty.title": { en: "No projects yet", ru: "Проектов пока нет" },
@@ -126,6 +150,7 @@ const translations = {
   "common.active": { en: "active", ru: "актив" },
   "common.noProjects": { en: "No projects yet.", ru: "Проектов пока нет." },
   "common.selectProject": { en: "Select a project from the sidebar.", ru: "Выберите проект из боковой панели." },
+  "common.cancel": { en: "Cancel", ru: "Отмена" },
 
   // Days of week
   "day.mon": { en: "Mon", ru: "Пн" },
@@ -155,7 +180,6 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
     const saved = localStorage.getItem(LANG_KEY);
     if (saved === "ru" || saved === "en") return saved;
-    // Auto-detect from browser
     const browserLang = navigator.language.toLowerCase();
     return browserLang.startsWith("ru") ? "ru" : "en";
   });

@@ -66,6 +66,28 @@ function extractDualHours(text: string): { actual: number; team: number } {
     if (actual <= 24 && team <= 24) return { actual, team };
   }
 
+  // Dual format: dash-separated with units (NO surrounding spaces around dash)
+  // e.g. "1.5h-4h", "30m-2h", "1ч-3ч" — but NOT "task - 4h" (spaced dash = separator)
+  const dualDash = text.match(
+    /(\d+[.,]?\d*|\.\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)[-–—](\d+[.,]?\d*|\.\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)/i
+  );
+  if (dualDash) {
+    const actual = parseTimeValue(dualDash[1], dualDash[2]);
+    const team = parseTimeValue(dualDash[3], dualDash[4]);
+    if (actual <= 24 && team <= 24) return { actual, team };
+  }
+
+  // Dual format: bare numbers with dash, NO spaces (e.g. "1.5-4" not "task - 4")
+  const bareDash = text.match(
+    /(?:^|[\s(,])(\d+[.,]?\d*)[-–—](\d+[.,]?\d*)(?:\s*$|\s*[),\s])/
+  );
+  if (bareDash) {
+    const a = parseFloat(bareDash[1].replace(",", "."));
+    const b = parseFloat(bareDash[2].replace(",", "."));
+    // Both must be > 0, ≤ 24, and different (same = not a range)
+    if (a > 0 && b > 0 && a <= 24 && b <= 24 && a !== b) return { actual: a, team: b };
+  }
+
   // Dual format: actual (team)  e.g. "1h (3h)", "2ч (5ч)"
   const dualParen = text.match(
     /(\d+[.,]?\d*|\.\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)\s*\(\s*(\d+[.,]?\d*|\.\d+)\s*([hч](?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|м)\s*\)/i
@@ -130,6 +152,10 @@ function cleanTaskText(text: string): string {
     .replace(/\s*[-–—]\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\(\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\)\s*/gi, "")
     // "1h (3h)" without dash
     .replace(/\s+\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\(\s*\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])\s*\)\s*$/gi, "")
+    // Remove dash-separated dual time WITHOUT spaces: "1.5h-4h", "30m-2h" (not "task - 4h")
+    .replace(/\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])[-–—]\d*[.,]?\d+\s*(?:h(?:rs?|ours?)?|m(?:in(?:s|utes?)?)?|[чм])/gi, "")
+    // Remove bare number dash ranges without spaces: "1.5-4" at end of line
+    .replace(/\s+\d+[.,]?\d*[-–—]\d+[.,]?\d*\s*$/g, "")
     // Remove Russian time patterns
     .replace(/\s*[-–—]\s*\d+[.,]?\d*\s*ч\s*/gi, "")
     .replace(/\s*\(\s*\d+[.,]?\d*\s*ч\s*\)\s*/gi, "")

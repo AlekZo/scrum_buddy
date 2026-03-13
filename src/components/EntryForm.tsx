@@ -10,7 +10,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { ParsedTasksDisplay } from "@/components/ParsedTasksDisplay";
 import { PlannedPanel } from "@/components/PlannedPanel";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar, Sparkles, Wand2, Undo2, HelpCircle } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { CheckCircle2, ListTodo, AlertTriangle, ArrowDownFromLine, Loader2, Check, RefreshCw, Calendar, Sparkles, Wand2, Undo2, HelpCircle, Lock, Unlock } from "lucide-react";
 import { toast } from "sonner";
 import {
   isGCalConfigured,
@@ -56,9 +57,17 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
     if (prevDateRef.current !== date || prevProjectRef.current !== project) {
       const prevForm = formRef.current;
       if (prevForm.done || prevForm.doing || prevForm.blockers) {
-        const tasks = [...parseTasks(prevForm.done, "done"), ...parseTasks(prevForm.doing, "doing")];
-        const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
-        onSaveRef.current(prevProjectRef.current, { ...prevForm, hours: totalHours });
+        const doneTasks = parseTasks(prevForm.done, "done");
+        const doingTasks = parseTasks(prevForm.doing, "doing");
+        const allTasks = [...doneTasks, ...doingTasks];
+        onSaveRef.current(prevProjectRef.current, {
+          ...prevForm,
+          hours: allTasks.reduce((s, t) => s + t.hours, 0),
+          actualHours: allTasks.reduce((s, t) => s + t.actualHours, 0),
+          teamHours: allTasks.reduce((s, t) => s + t.teamHours, 0),
+          doneTaskCount: doneTasks.length,
+          doingTaskCount: doingTasks.length,
+        });
       }
       prevDateRef.current = date;
       prevProjectRef.current = project;
@@ -81,16 +90,29 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
     }
   }, [onSave]);
 
-  // Debounced auto-save
+  // Debounced auto-save (skips if reported)
   const triggerAutoSave = useCallback(() => {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       const current = formRef.current;
+      if (current.reported) return; // Don't auto-save frozen entries
       if (current.done || current.doing || current.blockers) {
         setSaveState("saving");
-        const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
-        const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
-        doSave(project, { ...current, date, hours: totalHours });
+        const doneTasks = parseTasks(current.done, "done");
+        const doingTasks = parseTasks(current.doing, "doing");
+        const allTasks = [...doneTasks, ...doingTasks];
+        const totalHours = allTasks.reduce((sum, t) => sum + t.hours, 0);
+        const actualHours = allTasks.reduce((sum, t) => sum + t.actualHours, 0);
+        const teamHours = allTasks.reduce((sum, t) => sum + t.teamHours, 0);
+        doSave(project, {
+          ...current,
+          date,
+          hours: totalHours,
+          actualHours,
+          teamHours,
+          doneTaskCount: doneTasks.length,
+          doingTaskCount: doingTasks.length,
+        });
       }
     }, 1500);
   }, [project, date, doSave]);
@@ -98,27 +120,48 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
   const handleRetry = () => {
     setSaveState("saving");
     const current = formRef.current;
-    const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
-    const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
-    doSave(project, { ...current, date, hours: totalHours });
+    const doneTasks = parseTasks(current.done, "done");
+    const doingTasks = parseTasks(current.doing, "doing");
+    const allTasks = [...doneTasks, ...doingTasks];
+    doSave(project, {
+      ...current, date,
+      hours: allTasks.reduce((s, t) => s + t.hours, 0),
+      actualHours: allTasks.reduce((s, t) => s + t.actualHours, 0),
+      teamHours: allTasks.reduce((s, t) => s + t.teamHours, 0),
+      doneTaskCount: doneTasks.length,
+      doingTaskCount: doingTasks.length,
+    });
   };
 
-  // Force save pending changes on unmount — uses refs to avoid stale closures
+  // Helper: build entry with cached metadata from current form
+  const buildSaveEntry = (current: Entry): Entry => {
+    const doneTasks = parseTasks(current.done, "done");
+    const doingTasks = parseTasks(current.doing, "doing");
+    const allTasks = [...doneTasks, ...doingTasks];
+    return {
+      ...current,
+      hours: allTasks.reduce((s, t) => s + t.hours, 0),
+      actualHours: allTasks.reduce((s, t) => s + t.actualHours, 0),
+      teamHours: allTasks.reduce((s, t) => s + t.teamHours, 0),
+      doneTaskCount: doneTasks.length,
+      doingTaskCount: doingTasks.length,
+    };
+  };
+
+  // Force save pending changes on unmount
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         const current = formRef.current;
         if (current.done || current.doing || current.blockers) {
-          const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
-          const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
-          onSaveRef.current(prevProjectRef.current, { ...current, hours: totalHours });
+          onSaveRef.current(prevProjectRef.current, buildSaveEntry(current));
         }
       }
     };
   }, []);
 
-  // Flush pending save on tab close / navigation — beforeunload fires before React unmount
+  // Flush pending save on tab close / navigation
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (saveTimerRef.current) {
@@ -126,9 +169,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
         saveTimerRef.current = null;
         const current = formRef.current;
         if (current.done || current.doing || current.blockers) {
-          const tasks = [...parseTasks(current.done, "done"), ...parseTasks(current.doing, "doing")];
-          const totalHours = tasks.reduce((sum, t) => sum + t.hours, 0);
-          onSaveRef.current(prevProjectRef.current, { ...current, hours: totalHours });
+          onSaveRef.current(prevProjectRef.current, buildSaveEntry(current));
         }
       }
     };
@@ -137,6 +178,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
   }, []);
 
   const updateField = (key: "done" | "doing" | "blockers", value: string) => {
+    if (formRef.current.reported && key !== "blockers") return; // Protect frozen fields
     setForm((prev) => ({ ...prev, [key]: value }));
     triggerAutoSave();
   };
@@ -230,6 +272,28 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
     [parsedTasks]
   );
 
+  // Per-field hours for inline pill display
+  const fieldHours = useMemo(() => {
+    const doneT = parseTasks(form.done, "done");
+    const doingT = parseTasks(form.doing, "doing");
+    return {
+      done: { actual: doneT.reduce((s, t) => s + t.actualHours, 0), team: doneT.reduce((s, t) => s + t.teamHours, 0) },
+      doing: { actual: doingT.reduce((s, t) => s + t.actualHours, 0), team: doingT.reduce((s, t) => s + t.teamHours, 0) },
+    };
+  }, [form.done, form.doing]);
+
+  const isReported = form.reported ?? false;
+
+  const toggleReported = () => {
+    setForm((prev) => ({ ...prev, reported: !prev.reported }));
+    triggerAutoSave();
+  };
+
+  const unlockReported = () => {
+    setForm((prev) => ({ ...prev, reported: false }));
+    triggerAutoSave();
+  };
+
   const mergeSuggestions = useMemo(
     () =>
       findMergeSuggestions(parsedTasks, previousTasks).filter(
@@ -244,7 +308,7 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
   );
 
   const handlePrefillFromYesterday = () => {
-    if (!yesterday) return;
+    if (!yesterday || isReported) return; // Block prefill when reported
     setForm((prev) => ({
       ...prev,
       done: yesterday.doing ? yesterday.doing : prev.done,
@@ -345,18 +409,46 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
               <SaveIndicator />
             </div>
           </div>
-          <Popover>
-            <PopoverTrigger asChild>
-              <button className="text-muted-foreground hover:text-foreground transition-colors" title="Formatting help">
-                <HelpCircle className="w-3.5 h-3.5" />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent className="text-xs text-muted-foreground w-72" side="bottom" align="start">
-              <p>
-                Hours: <span className="font-mono bg-muted px-1 rounded">task - 2h</span> · Dual: <span className="font-mono bg-muted px-1 rounded">task - 1h/3h</span> <span className="text-xs">(actual/team)</span> · Also: <span className="font-mono bg-muted px-1 rounded">30m</span> <span className="font-mono bg-muted px-1 rounded">3ч</span>
-              </p>
-            </PopoverContent>
-          </Popover>
+          <div className="flex items-center justify-between">
+            <Popover>
+              <PopoverTrigger asChild>
+                <button className="text-muted-foreground hover:text-foreground transition-colors" title="Formatting help">
+                  <HelpCircle className="w-3.5 h-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent className="text-xs text-muted-foreground w-72" side="bottom" align="start">
+                <p>
+                  Hours: <span className="font-mono bg-muted px-1 rounded">task - 2h</span> · Dual: <span className="font-mono bg-muted px-1 rounded">task - 1h/3h</span> or <span className="font-mono bg-muted px-1 rounded">1h-3h</span> <span className="text-xs">(actual/team)</span> · Also: <span className="font-mono bg-muted px-1 rounded">30m</span> <span className="font-mono bg-muted px-1 rounded">3ч</span>
+                </p>
+              </PopoverContent>
+            </Popover>
+
+            {/* Reported toggle */}
+            <div className="flex items-center gap-2">
+              {isReported ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs gap-1.5 text-muted-foreground"
+                  onClick={unlockReported}
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  {t("entry.unlock")}
+                </Button>
+              ) : null}
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <Switch
+                  checked={isReported}
+                  onCheckedChange={toggleReported}
+                  className="scale-75"
+                />
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  {isReported && <Lock className="w-3 h-3" />}
+                  {t("entry.reported")}
+                </span>
+              </label>
+            </div>
+          </div>
           {yesterday?.doing && (
             <Button
               size="sm"
@@ -426,12 +518,28 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
             )}
           </div>
 
-          {fields.map(({ key, label, icon: Icon, color, placeholder }) => (
+          {fields.map(({ key, label, icon: Icon, color, placeholder }) => {
+            const fh = key !== "blockers" ? fieldHours[key] : null;
+            const hasDual = fh && fh.actual !== fh.team && fh.actual > 0;
+            return (
             <div key={key} className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className={`flex items-center gap-1.5 text-sm font-medium ${color}`}>
                   <Icon className="w-4 h-4" />
                   {label}
+                  {/* Inline hours pill */}
+                  {fh && fh.actual > 0 && (
+                    <span className="flex items-center gap-1 ml-1">
+                      {hasDual ? (
+                        <>
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono">{fh.actual.toFixed(1)}h actual</Badge>
+                          <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono">{fh.team.toFixed(1)}h team</Badge>
+                        </>
+                      ) : (
+                        <Badge variant="outline" className="text-[9px] px-1 py-0 font-mono">{fh.actual.toFixed(1)}h</Badge>
+                      )}
+                    </span>
+                  )}
                 </label>
                 {isAIConfigured() && key !== "blockers" && (
                    <div className="flex items-center gap-1">
@@ -507,17 +615,25 @@ export function EntryForm({ entry, date, project, previousTasks, yesterday, plan
                   <p className="text-[10px] text-muted-foreground text-center mt-2">AI is polishing your text…</p>
                 </div>
               ) : (
-                <RichTextEditor
-                  value={form[key]}
-                  onChange={(val) => updateField(key, val)}
-                  placeholder={placeholder}
-                  suggestions={key !== "blockers" ? historicalNames : undefined}
-                  disabled={merging || polishing.has(key)}
-                  className="bg-muted/30 border-border/50 focus-within:bg-background transition-colors"
-                />
+                <div className={isReported && key !== "blockers" ? "relative" : ""}>
+                  {isReported && key !== "blockers" && (
+                    <div className="absolute inset-0 z-10 rounded-md bg-muted/20 cursor-not-allowed flex items-center justify-center">
+                      <Lock className="w-4 h-4 text-muted-foreground/40" />
+                    </div>
+                  )}
+                  <RichTextEditor
+                    value={form[key]}
+                    onChange={(val) => updateField(key, val)}
+                    placeholder={placeholder}
+                    suggestions={key !== "blockers" ? historicalNames : undefined}
+                    disabled={merging || polishing.has(key) || (isReported && key !== "blockers")}
+                    className={`bg-muted/30 border-border/50 focus-within:bg-background transition-colors ${isReported && key !== "blockers" ? "opacity-60" : ""}`}
+                  />
+                </div>
               )}
             </div>
-          ))}
+          );
+          })}
         </CardContent>
       </Card>
 
