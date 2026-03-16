@@ -1,0 +1,15 @@
+services:
+  app:
+    image: scrum-buddy-app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7879:80"
+    volumes:
+      - scrum-data:/data
+    restart: unless-stopped
+
+volumes:
+  scrum-data:
+    driver: local
